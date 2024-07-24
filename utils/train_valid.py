@@ -27,13 +27,14 @@ def train(dataloaders, model, optimizer, scheduler, args, logger):
             train_loader.sampler.set_epoch(epoch)
         for i, (img, label) in enumerate(train_loader):
             img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
-            _, logtis = model(img)
+            _, logits = model(img)
 
             # classification loss
             loss = criteria(logits, label)
 
             if args.rank == 0:
                 train_loss = loss.item()
+                print(train_loss)
                 
             optimizer.zero_grad()
             loss.backward()
@@ -49,6 +50,7 @@ def train(dataloaders, model, optimizer, scheduler, args, logger):
             if args.rank == 0:
                 if cur_iter % 50 == 1:
                     cur_lr = optimizer.param_groups[0]['lr']
+                    print("Start evaluation")
                     test_acc, test_f1, test_auc, test_ap, test_bac, test_sens, test_spec, test_prec, test_mcc, test_kappa = validate(
                         test_loader, model)
                     if logger is not None:
@@ -82,10 +84,11 @@ def validate(dataloader, model):
     with torch.no_grad():
         for img, label in dataloader:
             img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
-            _, logtis = model(img)
+            _, logits = model(img)
             pred = F.softmax(logits, dim=1)
             ground_truth = torch.cat((ground_truth, label))
-            predictions = torch.cat((predictions, pred))        
+            predictions = torch.cat((predictions, pred))
+            print(predictions)        
 
         acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa = compute_avg_metrics(ground_truth, predictions, avg='macro')
     model.train(training)

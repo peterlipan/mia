@@ -2,7 +2,7 @@
 nodes: 1
 gpus: 4
 nr: 0
-workers: 8
+workers: 0
 visible_gpus: "0,1,2,3"
 
 # Paths
@@ -18,7 +18,7 @@ fold: 0
 
 # Training Options
 seed: 42
-batch_size: 128
+batch_size: 16
 image_size: 96
 patch_size: 8
 epochs: 100

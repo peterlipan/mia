@@ -655,7 +655,7 @@ class GroupViT(nn.Module):
                  embed_dim=256,
                  embed_factors=[1, 1, 1],
                  depths=[6, 3, 3],
-                 num_heads=[6, 6, 6],
+                 num_heads=[4, 4, 4],
                  num_group_tokens=[64, 8, 0],
                  num_output_groups=[64, 8],
                  hard_assignment=True,
@@ -901,7 +901,7 @@ class GroupViT(nn.Module):
 
 
     def forward(self, x):
-        tokens, group_token, attn_dicts = self.forward_features(x, return_attn=return_attn)
+        tokens, group_token, attn_dicts = self.forward_features(x, return_attn=True)
         # tokens: [B, L, C] -> [B, C, L] -> [B, C, 1] -> [B, C]
         features = self.avgpool(tokens.permute(0, 2, 1)).squeeze(-1)
 

@@ -8,8 +8,10 @@ from torch.utils.data import Dataset
 
 
 class AbideFrameDataset(Dataset):
-    def __init__(self, csv, data_root, suffix='_func_preproc.nii.gz', task='DX', transforms=None):
+    def __init__(self, csv, data_root, suffix='_func_preproc.nii.gz', task='DX', transforms=None, training=True):
         self.csv = csv
+        if not training:
+            self.csv = csv.sample(n=256, random_state=42)
         self.filenames = csv['FILE_ID'].values
         self.labels = csv['DX_GROUP'].values
         self.frame_id = csv['FRAME_ID'].values
