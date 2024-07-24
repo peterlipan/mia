@@ -19,7 +19,7 @@ def train(dataloaders, model, optimizer, scheduler, args, logger):
     model.train()
     start = time.time()
 
-    criteria = nn.CrossEntropyLoss()
+    criteria = nn.CrossEntropyLoss().cuda()
 
     cur_iter = 0
     for epoch in range(args.epochs):

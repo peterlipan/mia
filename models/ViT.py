@@ -7,8 +7,6 @@ import torch.utils.checkpoint as checkpoint
 from einops import rearrange
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_, to_3tuple
 
-from .misc import Result, interpolate_pos_encoding
-
 
 def interpolate_3d_pos_encoding(pos_embed, D, H, W):
     num_patches = D * H * W

@@ -1,5 +1,5 @@
 import torch
-import torchio
+import torchio as tio
 
 
 class Transform:
