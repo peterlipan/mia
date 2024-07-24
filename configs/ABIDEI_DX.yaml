@@ -1,0 +1,28 @@
+# distributed training
+nodes: 1
+gpus: 4
+nr: 0
+workers: 8
+
+# Paths
+data_root: "/mnt/ssd/li/ISIC2019LT"
+csv_file_train: "./split/ISIC2019LT/training.csv"
+csv_file_val: "./split/ISIC2019LT/validation.csv"
+csv_file_test: "./split/ISIC2019LT/testing.csv"
+checkpoints: "./checkpoints"
+
+# Dataset Options
+dataset: "ABIDEI"
+task: "DX"
+
+# Training Options
+seed: 42
+batch_size: 128
+image_size: 96
+epochs: 100
+
+# Model options
+patch_size: 8
+
+# Optimization options
+lr: 0.01

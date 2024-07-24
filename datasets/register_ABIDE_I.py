@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+import torchio as tio
 from nilearn import image
 
 
@@ -18,7 +19,7 @@ def register_ABIDE_I(data_root, output_dir):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    fmri_df = pd.DataFrame(columns=['SUB_ID', 'SITE_ID', 'FILE_ID', 'DX_GROUP', 'DSM_IV_TR', 'NUM_FRAMES'])
+    fmri_df = pd.DataFrame(columns=['SUB_ID', 'SITE_ID', 'FILE_ID', 'DX_GROUP', 'DSM_IV_TR', 'NUM_FRAMES', 'W', 'H', 'D', 'SPACING'])
     frame_df = pd.DataFrame(columns=['SUB_ID', 'SITE_ID', 'FILE_ID', 'DX_GROUP', 'DSM_IV_TR', 'FRAME_ID'])
 
     # Default preprocessing 
@@ -27,9 +28,11 @@ def register_ABIDE_I(data_root, output_dir):
     for index, row in tqdm(official_csv.iterrows()):
         file_path = os.path.join(data_dir, row['FILE_ID'] + suffix)
         if os.path.exists(file_path):
-            file = image.load_img(file_path)
-            num_frames = file.shape[-1]
-            fmri_df = fmri_df._append({'SUB_ID': row['SUB_ID'], 'SITE_ID': row['SITE_ID'], 'FILE_ID': row['FILE_ID'], 'DX_GROUP': row['DX_GROUP'], 'DSM_IV_TR': row['DSM_IV_TR'], 'NUM_FRAMES': num_frames}, ignore_index=True)
+            file = tio.ScalarImage(file_path)
+            num_frames, w, h, d = file.shape
+            spacing = file.spacing[0]
+            fmri_df = fmri_df._append({'SUB_ID': row['SUB_ID'], 'SITE_ID': row['SITE_ID'], 'FILE_ID': row['FILE_ID'], 'DX_GROUP': row['DX_GROUP'], 
+            'DSM_IV_TR': row['DSM_IV_TR'], 'NUM_FRAMES': num_frames, 'W': w, 'H': h, 'D': d, 'SPACING': spacing}, ignore_index=True)
             for i in range(num_frames):
                 frame_df = frame_df._append({'SUB_ID': row['SUB_ID'], 'SITE_ID': row['SITE_ID'], 'FILE_ID': row['FILE_ID'], 'DX_GROUP': row['DX_GROUP'], 'DSM_IV_TR': row['DSM_IV_TR'], 'FRAME_ID': i}, ignore_index=True)
 
