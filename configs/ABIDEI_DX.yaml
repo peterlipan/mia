@@ -2,11 +2,11 @@
 nodes: 1
 gpus: 3
 nr: 0
-workers: 8
+workers: 0
 visible_gpus: "5,6,7"
 
 # Paths
-data_root: "/home/r20user17/Documents/ABIDE_pcp/cpac/nofilt_noglobal"
+data_root: "/home/r20user17/Documents/ABIDEI_frames"
 csv_path: "/home/r20user17/mia/datasets/splits/ABIDEI_frames.csv"
 checkpoints: "./checkpoints"
 
@@ -15,20 +15,17 @@ dataset: "ABIDEI"
 task: "DX"
 KFold: 5
 fold: 0
-eval_steps: 5
+eval_steps: 10
 
 # Training Options
 seed: 42
-batch_size: 16
+batch_size: 32
 image_size: 96
 patch_size: 8
 epochs: 100
 
-# Model options
-patch_size: 16
-
 # Optimization options
-lr: 2.0e-4
+lr: 2.0e-3
 weight_decay: 0.01
 scheduler: True
 warmup_epochs: 10
