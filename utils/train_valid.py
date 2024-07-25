@@ -34,7 +34,6 @@ def train(dataloaders, model, optimizer, scheduler, args, logger):
 
             if args.rank == 0:
                 train_loss = loss.item()
-                print(train_loss)
                 
             optimizer.zero_grad()
             loss.backward()
@@ -50,9 +49,8 @@ def train(dataloaders, model, optimizer, scheduler, args, logger):
             if args.rank == 0:
                 if cur_iter % 50 == 1:
                     cur_lr = optimizer.param_groups[0]['lr']
-                    print("Start evaluation")
                     test_acc, test_f1, test_auc, test_ap, test_bac, test_sens, test_spec, test_prec, test_mcc, test_kappa = validate(
-                        test_loader, model)
+                        test_loader, model, args.eval_steps)
                     if logger is not None:
                         logger.log({'test': {'Accuracy': test_acc,
                                              'F1 score': test_f1,
@@ -74,7 +72,7 @@ def train(dataloaders, model, optimizer, scheduler, args, logger):
     # TODO: save the model
 
 
-def validate(dataloader, model):
+def validate(dataloader, model, max_steps=100):
     training = model.training
     model.eval()
 
@@ -82,13 +80,15 @@ def validate(dataloader, model):
     predictions = torch.Tensor().cuda()
 
     with torch.no_grad():
-        for img, label in dataloader:
+        for step, (img, label) in enumerate(dataloader):
             img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
             _, logits = model(img)
             pred = F.softmax(logits, dim=1)
             ground_truth = torch.cat((ground_truth, label))
             predictions = torch.cat((predictions, pred))
-            print(predictions)        
+            # for faster evaluation
+            if step >= max_steps:
+                break      
 
         acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa = compute_avg_metrics(ground_truth, predictions, avg='macro')
     model.train(training)
