@@ -1,2 +1,2 @@
 from .ViT import GroupViT
-from .utils import get_classifier, MyModel
+from .utils import get_classifier, MyModel, LinearClassifier

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from models import GroupViT, MyModel, get_classifier
+from models import GroupViT, MyModel, get_classifier, LinearClassifier
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from transformers.optimization import get_cosine_schedule_with_warmup
@@ -79,7 +79,7 @@ def main(gpu, args, wandb_logger):
 
         encoder = GroupViT(img_size=args.image_size, patch_size=args.patch_size)
         n_features = encoder.num_features
-        classifier = get_classifier(n_features, n_classes)
+        classifier = LinearClassifier(n_features, n_classes)
         model = MyModel(encoder, classifier).cuda()
 
         optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
