@@ -69,7 +69,7 @@ def main(gpu, args, wandb_logger):
         )
         if rank == 0:
             # FIXME: only for faster evaluation, remember to disable the shuffle for full evaluation
-            test_dataset = AbideFrameDataset(test_csv, args.data_root, task=args.task, transforms=train_transforms)
+            test_dataset = AbideFrameDataset(test_csv, args.data_root, task=args.task, transforms=test_transforms)
             test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
         else:
             test_loader = None

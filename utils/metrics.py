@@ -5,23 +5,33 @@ from imblearn.metrics import sensitivity_score, specificity_score
 
 
 def compute_avg_metrics(ground_truth, activations, avg='micro'):
+
     ground_truth = ground_truth.cpu().detach().numpy()
     activations = activations.cpu().detach().numpy()
     predictions = np.argmax(activations, -1)
-    mean_acc = accuracy_score(y_true=ground_truth, y_pred=predictions)
-    f1 = f1_score(y_true=ground_truth, y_pred=predictions, average=avg)
+
     multi_class = 'ovr'
+    ill_avg = avg
     # For binary classification
     if activations.shape[1] == 2:
         activations = activations[:, 1]
         multi_class = 'raise'
+        # binary average is illegal for auc
+        ill_avg = None
+        avg = 'binary'
+
+    print(predictions)
+    print(ground_truth)
+    mean_acc = accuracy_score(y_true=ground_truth, y_pred=predictions)
+    f1 = f1_score(y_true=ground_truth, y_pred=predictions, average=avg)
+
     try:
-        auc = roc_auc_score(y_true=ground_truth, y_score=activations, multi_class=multi_class, average=avg)
+        auc = roc_auc_score(y_true=ground_truth, y_score=activations, multi_class=multi_class, average=ill_avg)
     except ValueError as error:
         print('Error in computing AUC. Error msg:{}'.format(error))
         auc = 0
     try:
-        ap = average_precision_score(y_true=ground_truth, y_score=activations, average=avg)
+        ap = average_precision_score(y_true=ground_truth, y_score=activations, average=ill_avg)
     except Exception as error:
         print('Error in computing AP. Error msg:{}'.format(error))
         ap = 0

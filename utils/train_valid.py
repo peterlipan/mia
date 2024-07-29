@@ -86,6 +86,7 @@ def validate(dataloader, model, max_steps=100):
             pred = F.softmax(logits, dim=1)
             ground_truth = torch.cat((ground_truth, label))
             predictions = torch.cat((predictions, pred))
+
             # for faster evaluation
             if step >= max_steps:
                 break      
