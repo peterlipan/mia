@@ -10,6 +10,9 @@ data_root: "/home/r20user17/Documents/ABIDEI_frames"
 csv_path: "/home/r20user17/mia/datasets/splits/ABIDEI_frames.csv"
 checkpoints: "./checkpoints"
 
+# Model Options
+backbone: "groupvit"
+
 # Dataset Options
 dataset: "ABIDEI"
 task: "DX"
