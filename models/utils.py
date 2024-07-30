@@ -8,11 +8,11 @@ def get_classifier(n_features, n_classes):
 
 
 def get_encoder(args):
-    if args.model == 'groupvit':
+    if args.backbone == 'groupvit':
         from .GroupViT import GroupViT
         return GroupViT(img_size=args.image_size, patch_size=args.patch_size)
-    elif args.model == 'swin':
-        from models.Swin3D import SwinTransformer3d
+    elif args.backbone == 'swin':
+        from .Swin3D import SwinTransformer3d
         return SwinTransformer3d(patch_size=args.patch_size)
     else:
         raise NotImplementedError(f"Model {args.model} not implemented")

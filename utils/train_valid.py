@@ -31,6 +31,7 @@ def train(dataloaders, model, optimizer, scheduler, args, logger):
 
             # classification loss
             loss = criteria(logits, label)
+            print(loss)
 
             if args.rank == 0:
                 train_loss = loss.item()
@@ -47,7 +48,7 @@ def train(dataloaders, model, optimizer, scheduler, args, logger):
 
             cur_iter += 1
             if args.rank == 0:
-                if cur_iter % 50 == 1:
+                if cur_iter % 50 == 0:
                     cur_lr = optimizer.param_groups[0]['lr']
                     test_acc, test_f1, test_auc, test_ap, test_bac, test_sens, test_spec, test_prec, test_mcc, test_kappa = validate(
                         test_loader, model, args.eval_steps)

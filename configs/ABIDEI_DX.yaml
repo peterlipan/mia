@@ -11,14 +11,14 @@ csv_path: "/home/r20user17/mia/datasets/splits/ABIDEI_frames.csv"
 checkpoints: "./checkpoints"
 
 # Model Options
-backbone: "groupvit"
+backbone: "swin"
 
 # Dataset Options
 dataset: "ABIDEI"
 task: "DX"
 KFold: 5
 fold: 0
-eval_steps: 10
+eval_steps: 1
 
 # Training Options
 seed: 42
