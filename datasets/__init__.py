@@ -1,2 +1,2 @@
-from .ABIDE import AbideFrameDataset
-from .transforms import Transform
+from .ABIDE import AbideFrameDataset, AbideFmriDataset
+from .transforms import FrameTransform, FmriTransform

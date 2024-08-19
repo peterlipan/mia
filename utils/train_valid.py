@@ -73,6 +73,69 @@ def train(dataloaders, model, optimizer, scheduler, args, logger):
     # TODO: save the model
 
 
+def expectation_step(encoder, classifier, train_loader, optimizer, args):
+    # Expectation step (for one epoch)
+    # Freeze the classifier and train the encoder of frames
+    # to extimate the distribution of frame-level features
+    encoder.train()
+    classifier.eval()
+
+    criteria = nn.CrossEntropyLoss().cuda()
+    start = time.time()
+    if isinstance(train_loader.sampler, DistributedSampler):
+        train_loader.sampler.set_epoch(0)
+    for i, (img, label) in enumerate(train_loader):
+        img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
+        features = encoder(img)
+        with torch.no_grad():
+            logits = classifier(features)
+        loss = criteria(logits, label)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if dist.is_available() and dist.is_initialized():
+            loss = loss.data.clone()
+            dist.all_reduce(loss.div_(dist.get_world_size()))
+    print(f'Expectation step finished in {time.time() - start:.4f} sec')
+
+    return encoder
+
+
+def maximization_step(encoder, aggregator, classifier, train_loader, test_loader, optimizer, args):
+    # Maximization step (for one epoch)
+    # Freeze the encoder and train the aggregator and classifier
+    encoder.eval()
+    aggregator.train()
+    classifier.train()
+
+    criteria = nn.CrossEntropyLoss().cuda()
+    start = time.time()
+
+    if isinstance(train_loader.sampler, DistributedSampler):
+        train_loader.sampler.set_epoch(0)
+    for i, (img, label) in enumerate(train_loader):
+        img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
+
+        with torch.no_grad():
+            features = encoder(img)
+
+        fmri_features = aggregator(features)
+        logits = classifier(fmri_features)
+        loss = criteria(logits, label)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if dist.is_available() and dist.is_initialized():
+            loss = loss.data.clone()
+            dist.all_reduce(loss.div_(dist.get_world_size()))
+    print(f'Maximization step finished in {time.time() - start:.4f} sec')
+    return aggregator, classifier
+    
+
 def validate(dataloader, model, max_steps=100):
     training = model.training
     model.eval()
@@ -96,3 +159,24 @@ def validate(dataloader, model, max_steps=100):
     model.train(training)
     return acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa
 
+
+def iterative_training(dataloaders, model, optimizer, scheduler, args, logger):
+    encoder, aggregator, classifier = model
+    for epoch in range(args.epochs):
+        encoder = expectation_step(encoder, classifier, dataloaders[0], optimizer, args)
+        aggregator, classifier = maximization_step(encoder, aggregator, classifier, dataloaders[0], dataloaders[1], optimizer, args)
+        if args.rank == 0:
+            test_acc, test_f1, test_auc, test_ap, test_bac, test_sens, test_spec, test_prec, test_mcc, test_kappa = validate(
+                dataloaders[1], model, args.eval_steps)
+            if logger is not None:
+                logger.log({'test': {'Accuracy': test_acc,
+                                     'F1 score': test_f1,
+                                     'AUC': test_auc,
+                                     'AP': test_ap,
+                                     'Balanced Accuracy': test_bac,
+                                     'Sensitivity': test_sens,
+                                     'Specificity': test_spec,
+                                     'Precision': test_prec,
+                                     'MCC': test_mcc,
+                                     'Kappa': test_kappa}}, )
+            print(f'Epoch: {epoch} finished')

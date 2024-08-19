@@ -1,2 +1,2 @@
 from .GroupViT import GroupViT
-from .utils import get_classifier, MyModel, LinearClassifier, get_encoder
+from .utils import get_classifier, get_encoder, get_aggregator

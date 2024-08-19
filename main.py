@@ -6,13 +6,13 @@ import numpy as np
 import pandas as pd
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from models import GroupViT, MyModel, get_classifier, LinearClassifier, get_encoder
+from models import get_classifier, get_encoder, get_aggregator
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from transformers.optimization import get_cosine_schedule_with_warmup
 from utils import yaml_config_hook, train
 from sklearn.model_selection import KFold
-from datasets import AbideFrameDataset, Transform
+from datasets import AbideFrameDataset, FrameTransform, FmriTransform, AbideFmriDataset
 
 
 def main(gpu, args, wandb_logger):
@@ -30,13 +30,17 @@ def main(gpu, args, wandb_logger):
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    train_transforms = Transform(args.image_size, training=True)
-    test_transforms = Transform(args.image_size, training=False)
+    frame_transforms = FrameTransform(args.image_size, training=True)
+    fmri_train_transforms = FmriTransform(args.image_size, training=True)
+    fmri_test_transforms = FmriTransform(args.image_size, training=False)
 
     # load data file
-    csv_file = pd.read_csv(args.csv_path)
+    frame_csv_file = pd.read_csv(args.frame_csv_path)
+    fmri_csv_file = pd.read_csv(args.fmri_csv_path)
+
     kf = KFold(n_splits=args.KFold, shuffle=True, random_state=args.seed)
-    unique_patient = pd.unique(csv_file['SUB_ID'])
+    unique_patient = pd.unique(frame_csv_file['SUB_ID'])
+
     # split the dataset based on patients
     for i, (train_id, test_id) in enumerate(kf.split(unique_patient)):
         # run only on one fold
@@ -44,11 +48,14 @@ def main(gpu, args, wandb_logger):
             continue
         train_patient_idx = unique_patient[train_id]
         test_patient_idx = unique_patient[test_id]
-        train_csv = csv_file[csv_file['SUB_ID'].isin(train_patient_idx)]
-        test_csv = csv_file[csv_file['SUB_ID'].isin(test_patient_idx)]
 
-        train_dataset = AbideFrameDataset(train_csv, args.data_root, task=args.task, transforms=train_transforms)
-        step_per_epoch = len(train_dataset) // (args.batch_size * args.world_size)
+        train_frame_csv = csv_file[frame_csv_file['SUB_ID'].isin(train_patient_idx)]
+        train_frame_dataset = AbideFrameDataset(train_frame_csv, args.data_root, task=args.task, transforms=frame_transforms)
+
+        train_fmri_csv = fmri_csv_file[fmri_csv_file['SUB_ID'].isin(train_patient_idx)]
+        test_fmri_csv = fmri_csv_file[fmri_csv_file['SUB_ID'].isin(test_patient_idx)]s
+
+        train_fmri_dataset = AbideFmriDataset(train_fmri_csv, args.data_root, task=args.task, transforms=fmri_train_transforms)
 
         # set sampler for parallel training
         if args.world_size > 1:
@@ -58,8 +65,8 @@ def main(gpu, args, wandb_logger):
         else:
             train_sampler = None
 
-        train_loader = DataLoader(
-            train_dataset,
+        train_frame_loader = DataLoader(
+            train_frame_dataset,
             batch_size=args.batch_size,
             shuffle=(train_sampler is None),
             drop_last=True,
@@ -67,31 +74,40 @@ def main(gpu, args, wandb_logger):
             sampler=train_sampler,
             pin_memory=True,
         )
-        if rank == 0:
-            # FIXME: only for faster evaluation, remember to disable the shuffle for full evaluation
-            test_dataset = AbideFrameDataset(test_csv, args.data_root, task=args.task, transforms=test_transforms)
-            test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
-        else:
-            test_loader = None
+        train_fmri_loader = DataLoader(
+            train_fmri_dataset,
+            batch_size=args.batch_size,
+            shuffle=(train_sampler is None),
+            drop_last=True,
+            num_workers=args.workers,
+            sampler=train_sampler,
+            pin_memory=True,
+        )
 
-        loaders = (train_loader, test_loader)
+        if rank == 0:
+            test_fmri_dataset = AbideFmriDataset(test_fmri_csv, args.data_root, task=args.task, transforms=fmri_test_transforms)
+            test_fmri_loader = DataLoader(test_fmri_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
+        else:
+            test_fmri_loader = None
+
         n_classes = train_dataset.n_classes
 
         encoder = get_encoder(args)
         n_features = encoder.num_features
-        classifier = LinearClassifier(n_features, n_classes)
-        model = MyModel(encoder, classifier).cuda()
+        aggregator = get_aggregator(args)
+        classifier = get_classifier(n_features, n_classes)
 
-        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-
-        if args.scheduler:
-            scheduler = get_cosine_schedule_with_warmup(optimizer, args.warmup_epochs * step_per_epoch, args.epochs * step_per_epoch)
-        else:
-            scheduler = None
+        e_optimizer = torch.optim.AdamW(encoder.parameters(), lr=args.lr_e, weight_decay=args.weight_decay)
+        m_optimizer = torch.optim.AdamW([{'params': aggregator.parameters(), 'params': classifier.parameters()}], lr=args.lr_m, weight_decay=args.weight_decay)
 
         if args.world_size > 1:
-            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-            model = DDP(model, device_ids=[gpu])
+            encoder = torch.nn.SyncBatchNorm.convert_sync_batchnorm(encoder)
+            aggregator = torch.nn.SyncBatchNorm.convert_sync_batchnorm(aggregator)
+            classifier = torch.nn.SyncBatchNorm.convert_sync_batchnorm(classifier)
+
+            encoder = DDP(encoder, device_ids=[gpu])
+            aggregator = DDP(aggregator, device_ids=[gpu])
+            classifier = DDP(classifier, device_ids=[gpu])
 
         train(loaders, model, optimizer, scheduler, args, wandb_logger)
 
