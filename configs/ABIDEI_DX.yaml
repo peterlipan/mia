@@ -1,12 +1,13 @@
 # distributed training
 nodes: 1
-gpus: 4
+gpus: 2
 nr: 0
 workers: 0
-visible_gpus: "0,1,2,3"
+visible_gpus: "0,1"
 
 # Paths
-data_root: "/home/r20user17/Documents/ABIDEI_frames"
+frame_data_root: "/home/featurize/data/ABIDEI_frames"
+fmri_data_root: "/home/featurize/data/ABIDE_pcp/cpac/nofilt_noglobal"
 frame_csv_path: "/home/r20user17/mia/datasets/splits/ABIDEI_frames.csv"
 fmri_csv_path: "/home/r20user17/mia/datasets/splits/ABIDEI_fMRI.csv"
 checkpoints: "./checkpoints"

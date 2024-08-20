@@ -50,12 +50,12 @@ def main(gpu, args, wandb_logger):
         test_patient_idx = unique_patient[test_id]
 
         train_frame_csv = frame_csv_file[frame_csv_file['SUB_ID'].isin(train_patient_idx)]
-        train_frame_dataset = AbideFrameDataset(train_frame_csv, args.data_root, task=args.task, transforms=frame_transforms)
+        train_frame_dataset = AbideFrameDataset(train_frame_csv, args.frame_data_root, task=args.task, transforms=frame_transforms)
 
         train_fmri_csv = fmri_csv_file[fmri_csv_file['SUB_ID'].isin(train_patient_idx)]
         test_fmri_csv = fmri_csv_file[fmri_csv_file['SUB_ID'].isin(test_patient_idx)]
 
-        train_fmri_dataset = AbideFmriDataset(train_fmri_csv, args.data_root, task=args.task, transforms=fmri_train_transforms)
+        train_fmri_dataset = AbideFmriDataset(train_fmri_csv, args.fmri_data_root, task=args.task, transforms=fmri_train_transforms)
 
         # set sampler for parallel training
         if args.world_size > 1:

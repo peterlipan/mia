@@ -31,7 +31,7 @@ def slice_fMRI(data_root, output_dir):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Register ABIDE I dataset')
-    parser.add_argument('--data_root', type=str, default='/home/r20user17/Documents', help='Root directory of the dataset')
-    parser.add_argument('--output_dir', type=str, default='/home/r20user17/Documents/ABIDEI_frames', help='Output directory')
+    parser.add_argument('--data_root', type=str, default='/home/featurize/data', help='Root directory of the dataset')
+    parser.add_argument('--output_dir', type=str, default='/home/featurize/data/ABIDEI_frames', help='Output directory')
     args = parser.parse_args()
     slice_fMRI(args.data_root, args.output_dir)
