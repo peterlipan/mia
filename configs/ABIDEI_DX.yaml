@@ -3,7 +3,7 @@ nodes: 1
 gpus: 4
 nr: 0
 workers: 0
-visible_gpus: "0,1,3,4"
+visible_gpus: "0,1,2,3"
 
 # Paths
 data_root: "/home/r20user17/Documents/ABIDEI_frames"
@@ -23,7 +23,7 @@ fold: 0
 
 # Training Options
 seed: 42
-batch_size: 16
+batch_size: 4
 image_size: 96
 patch_size: 8
 epochs: 100

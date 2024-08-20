@@ -73,11 +73,12 @@ def train(dataloaders, model, optimizer, scheduler, args, logger):
     # TODO: save the model
 
 
-def expectation_step(encoder, classifier, train_loader, optimizer):
+def expectation_step(encoder, aggregator, classifier, train_loader, optimizer):
     # Expectation step (for one epoch)
     # Freeze the classifier and train the encoder of frames
     # to extimate the distribution of frame-level features
     encoder.train()
+    aggregator.eval()
     classifier.eval()
 
     criteria = nn.CrossEntropyLoss().cuda()
@@ -88,10 +89,13 @@ def expectation_step(encoder, classifier, train_loader, optimizer):
         img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
         features = encoder(img)
         with torch.no_grad():
+            # features: [B, C] -> [B, 1, C]
+            features = aggregator(features.unsqueeze(1))
             logits = classifier(features)
         loss = criteria(logits, label)
 
         optimizer.zero_grad()
+        loss.requires_grad_(True)
         loss.backward()
         optimizer.step()
 
@@ -165,7 +169,7 @@ def iterative_training(loaders, models, optimizers, args, logger):
     e_optimizer, m_optimizer = optimizers
 
     for epoch in range(args.epochs):
-        encoder = expectation_step(encoder, classifier.module, train_frame_loader, e_optimizer)
+        encoder = expectation_step(encoder, aggregator.module, classifier.module, train_frame_loader, e_optimizer)
         aggregator, classifier = maximization_step(encoder.module, aggregator, classifier, train_fmri_loader, m_optimizer)
 
         if args.rank == 0:

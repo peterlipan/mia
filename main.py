@@ -10,7 +10,7 @@ from models import get_classifier, get_encoder, get_aggregator
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from transformers.optimization import get_cosine_schedule_with_warmup
-from utils import yaml_config_hook, train
+from utils import yaml_config_hook, train, iterative_training
 from sklearn.model_selection import KFold
 from datasets import AbideFrameDataset, FrameTransform, FmriTransform, AbideFmriDataset
 
@@ -49,38 +49,42 @@ def main(gpu, args, wandb_logger):
         train_patient_idx = unique_patient[train_id]
         test_patient_idx = unique_patient[test_id]
 
-        train_frame_csv = csv_file[frame_csv_file['SUB_ID'].isin(train_patient_idx)]
+        train_frame_csv = frame_csv_file[frame_csv_file['SUB_ID'].isin(train_patient_idx)]
         train_frame_dataset = AbideFrameDataset(train_frame_csv, args.data_root, task=args.task, transforms=frame_transforms)
 
         train_fmri_csv = fmri_csv_file[fmri_csv_file['SUB_ID'].isin(train_patient_idx)]
-        test_fmri_csv = fmri_csv_file[fmri_csv_file['SUB_ID'].isin(test_patient_idx)]s
+        test_fmri_csv = fmri_csv_file[fmri_csv_file['SUB_ID'].isin(test_patient_idx)]
 
         train_fmri_dataset = AbideFmriDataset(train_fmri_csv, args.data_root, task=args.task, transforms=fmri_train_transforms)
 
         # set sampler for parallel training
         if args.world_size > 1:
-            train_sampler = torch.utils.data.distributed.DistributedSampler(
-                train_dataset, num_replicas=args.world_size, rank=rank, shuffle=True
+            train_frame_sampler = torch.utils.data.distributed.DistributedSampler(
+                train_frame_dataset, num_replicas=args.world_size, rank=rank, shuffle=True
+            )
+            train_fmri_sampler = torch.utils.data.distributed.DistributedSampler(
+                train_fmri_dataset, num_replicas=args.world_size, rank=rank, shuffle=True
             )
         else:
-            train_sampler = None
+            train_frame_sampler = None
+            train_fmri_sampler = None
 
         train_frame_loader = DataLoader(
             train_frame_dataset,
             batch_size=args.batch_size,
-            shuffle=(train_sampler is None),
+            shuffle=(train_frame_sampler is None),
             drop_last=True,
             num_workers=args.workers,
-            sampler=train_sampler,
+            sampler=train_frame_sampler,
             pin_memory=True,
         )
         train_fmri_loader = DataLoader(
             train_fmri_dataset,
             batch_size=args.batch_size,
-            shuffle=(train_sampler is None),
+            shuffle=(train_fmri_sampler is None),
             drop_last=True,
             num_workers=args.workers,
-            sampler=train_sampler,
+            sampler=train_fmri_sampler,
             pin_memory=True,
         )
 
@@ -90,12 +94,13 @@ def main(gpu, args, wandb_logger):
         else:
             test_fmri_loader = None
 
-        n_classes = train_dataset.n_classes
+        n_classes = train_fmri_dataset.n_classes
 
-        encoder = get_encoder(args)
+        encoder = get_encoder(args).cuda()
         n_features = encoder.num_features
-        aggregator = get_aggregator(args)
-        classifier = get_classifier(n_features, n_classes)
+        aggregator = get_aggregator(args).cuda()
+        # FIXME: the n_features is assigned as 512
+        classifier = get_classifier(512, n_classes).cuda()
 
         e_optimizer = torch.optim.AdamW(encoder.parameters(), lr=args.lr_e, weight_decay=args.weight_decay)
         m_optimizer = torch.optim.AdamW([{'params': aggregator.parameters(), 'params': classifier.parameters()}], lr=args.lr_m, weight_decay=args.weight_decay)
@@ -112,7 +117,7 @@ def main(gpu, args, wandb_logger):
         dataloaders = (train_frame_loader, train_fmri_loader, test_fmri_loader)
         models = (encoder, aggregator, classifier)
         optimizers = (e_optimizer, m_optimizer)
-        
+        iterative_training(dataloaders, models, optimizers, args, wandb_logger)
 
 
 if __name__ == '__main__':
