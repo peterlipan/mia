@@ -8,6 +8,7 @@ from torch import nn
 import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
 import torch.distributed as dist
+from einops import rearrange
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 from .metrics import compute_avg_metrics
@@ -99,6 +100,8 @@ def expectation_step(encoder, aggregator, classifier, train_loader, optimizer):
         loss.backward()
         optimizer.step()
 
+        print(f"Expectation step: {i} / {len(train_loader)}")
+
         if dist.is_available() and dist.is_initialized():
             loss = loss.data.clone()
             dist.all_reduce(loss.div_(dist.get_world_size()))
@@ -130,6 +133,7 @@ def maximization_step(encoder, aggregator, classifier, train_loader, optimizer):
         loss = criteria(logits, label)
 
         optimizer.zero_grad()
+        loss.requires_grad_(True)
         loss.backward()
         optimizer.step()
 
@@ -151,8 +155,14 @@ def validate(dataloader, encoder, aggregator, classifier):
     with torch.no_grad():
         for step, (img, label) in enumerate(dataloader):
             img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
+            
+            # img [B, T, C, D, H, W] -> [BxT, C, D, H, W] and feed into the frame encoder
+            img = rearrange(img, 'B T C D H W -> (B T) C D H W')
             features = encoder(img)
+            # features: [BxT, C] -> [B, T, C]
+            features = rearrange(features, '(B T) C -> B T C', B=img.size(0), T=img.size(1))
             features = aggregator(features)
+            # features: [B, C]
             logits = classifier(features)
 
             pred = F.softmax(logits, dim=1)
@@ -160,6 +170,9 @@ def validate(dataloader, encoder, aggregator, classifier):
             predictions = torch.cat((predictions, pred))  
 
         acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa = compute_avg_metrics(ground_truth, predictions, avg='micro')
+    encoder.train()
+    aggregator.train()
+    classifier.train()
     return acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa
 
 
@@ -187,3 +200,57 @@ def iterative_training(loaders, models, optimizers, args, logger):
                                      'MCC': test_mcc,
                                      'Kappa': test_kappa}}, )
             print(f'Epoch: {epoch} finished')
+
+
+def direct_training(loaders, models, optimizer, args, logger):
+    train_frame_loader, train_fmri_loader, test_fmri_loader = loaders
+    encoder, aggregator, classifier = models
+
+    criteria = nn.CrossEntropyLoss().cuda()
+
+    encoder.train()
+    aggregator.train()
+    classifier.train()
+    
+    cur_iter = 0
+    
+    for epoch in range(args.epochs):
+        for img, label in train_fmri_loader:
+            img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
+
+            # img [B, T, C, D, H, W] -> [BxT, C, D, H, W] and feed into the frame encoder
+            img = rearrange(img, 'B T C D H W -> (B T) C D H W')
+            features = encoder(img)
+            # features: [BxT, C] -> [B, T, C]
+            features = rearrange(features, '(B T) C -> B T C', B=img.size(0), T=img.size(1))
+            features = aggregator(features)
+            # features: [B, C]
+            logits = classifier(features)
+
+            loss = criteria(logits, label)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            if dist.is_available() and dist.is_initialized():
+                loss = loss.data.clone()
+                dist.all_reduce(loss.div_(dist.get_world_size()))
+
+            cur_iter += 1
+            if cur_iter % 100 == 1:
+                if args.rank == 0:
+                    test_acc, test_f1, test_auc, test_ap, test_bac, test_sens, test_spec, test_prec, test_mcc, test_kappa = validate(
+                        test_fmri_loader, encoder, aggregator, classifier)
+                    print(f"Epoch: {epoch} / {args.epochs} || Iter: {cur_iter} || Test Acc: {test_acc} || Test F1: {test_f1} || Test AUC: {test_auc}")
+                    if logger is not None:
+                        logger.log({'test': {'Accuracy': test_acc,
+                                            'F1 score': test_f1,
+                                            'AUC': test_auc,
+                                            'AP': test_ap,
+                                            'Balanced Accuracy': test_bac,
+                                            'Sensitivity': test_sens,
+                                            'Specificity': test_spec,
+                                            'Precision': test_prec,
+                                            'MCC': test_mcc,
+                                            'Kappa': test_kappa}}, )

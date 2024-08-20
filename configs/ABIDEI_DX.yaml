@@ -8,13 +8,13 @@ visible_gpus: "0,1"
 # Paths
 frame_data_root: "/home/featurize/data/ABIDEI_frames"
 fmri_data_root: "/home/featurize/data/ABIDE_pcp/cpac/nofilt_noglobal"
-frame_csv_path: "/home/r20user17/mia/datasets/splits/ABIDEI_frames.csv"
-fmri_csv_path: "/home/r20user17/mia/datasets/splits/ABIDEI_fMRI.csv"
+frame_csv_path: "./datasets/splits/ABIDEI_frames.csv"
+fmri_csv_path: "./datasets/splits/ABIDEI_fMRI.csv"
 checkpoints: "./checkpoints"
 
 # Model Options
 backbone: "groupvit"
-embed_dim: 1024
+embed_dim: 512
 
 # Dataset Options
 dataset: "ABIDEI"
@@ -24,12 +24,13 @@ fold: 0
 
 # Training Options
 seed: 42
-batch_size: 4
-image_size: 96
+batch_size: 1
+image_size: 48
 patch_size: 8
 epochs: 100
 
 # Optimization options
+lr: 2.0e-3
 lr_e: 2.0e-3
 lr_m: 2.0e-4
 weight_decay: 0.01

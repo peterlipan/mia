@@ -10,7 +10,7 @@ from models import get_classifier, get_encoder, get_aggregator
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from transformers.optimization import get_cosine_schedule_with_warmup
-from utils import yaml_config_hook, train, iterative_training
+from utils import yaml_config_hook, train, iterative_training, direct_training
 from sklearn.model_selection import KFold
 from datasets import AbideFrameDataset, FrameTransform, FmriTransform, AbideFmriDataset
 
@@ -82,6 +82,7 @@ def main(gpu, args, wandb_logger):
             train_fmri_dataset,
             batch_size=args.batch_size,
             shuffle=(train_fmri_sampler is None),
+            collate_fn=train_fmri_dataset.collate_fn,
             drop_last=True,
             num_workers=args.workers,
             sampler=train_fmri_sampler,
@@ -89,8 +90,8 @@ def main(gpu, args, wandb_logger):
         )
 
         if rank == 0:
-            test_fmri_dataset = AbideFmriDataset(test_fmri_csv, args.data_root, task=args.task, transforms=fmri_test_transforms)
-            test_fmri_loader = DataLoader(test_fmri_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
+            test_fmri_dataset = AbideFmriDataset(test_fmri_csv, args.fmri_data_root, task=args.task, transforms=fmri_test_transforms)
+            test_fmri_loader = DataLoader(test_fmri_dataset, batch_size=args.batch_size, collate_fn=test_fmri_dataset.collate_fn, shuffle=False, num_workers=args.workers, pin_memory=True)
         else:
             test_fmri_loader = None
 
@@ -104,6 +105,7 @@ def main(gpu, args, wandb_logger):
 
         e_optimizer = torch.optim.AdamW(encoder.parameters(), lr=args.lr_e, weight_decay=args.weight_decay)
         m_optimizer = torch.optim.AdamW([{'params': aggregator.parameters(), 'params': classifier.parameters()}], lr=args.lr_m, weight_decay=args.weight_decay)
+        optimizer = torch.optim.AdamW([{'params': encoder.parameters(), 'params': aggregator.parameters(), 'params': classifier.parameters()}], lr=args.lr, weight_decay=args.weight_decay)
 
         if args.world_size > 1:
             encoder = torch.nn.SyncBatchNorm.convert_sync_batchnorm(encoder)
@@ -117,7 +119,8 @@ def main(gpu, args, wandb_logger):
         dataloaders = (train_frame_loader, train_fmri_loader, test_fmri_loader)
         models = (encoder, aggregator, classifier)
         optimizers = (e_optimizer, m_optimizer)
-        iterative_training(dataloaders, models, optimizers, args, wandb_logger)
+        # iterative_training(dataloaders, models, optimizers, args, wandb_logger)
+        direct_training(dataloaders, models, optimizer, args, wandb_logger)
 
 
 if __name__ == '__main__':

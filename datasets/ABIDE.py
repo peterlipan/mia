@@ -5,6 +5,7 @@ import numpy as np
 import torchio as tio
 from nilearn import image
 from torch.utils.data import Dataset
+from torch.nn.utils.rnn import pad_sequence
 
 
 class AbideFrameDataset(Dataset):
@@ -37,7 +38,8 @@ class AbideFrameDataset(Dataset):
             frame = tio.ScalarImage(frame_path)
         if self.transforms:
             frame = self.transforms(frame)
-
+        
+        # frame: [1, H, W, D]
         return frame, label
 
 
@@ -62,5 +64,15 @@ class AbideFmriDataset(Dataset):
         fmri = tio.ScalarImage(file_path)
         if self.transforms:
             fmri = self.transforms(fmri)
+        # fmri: [T, H, W, D] -> [T, C, H, W, D] (C = 1)
+        fmri = fmri.unsqueeze(1)
 
         return fmri, label
+
+    @staticmethod
+    def collate_fn(batch):
+        data, label = list(zip(*batch))
+        # pad the sequence on T
+        data = pad_sequence(data, batch_first=True)
+        label = torch.tensor(label)
+        return data, label
