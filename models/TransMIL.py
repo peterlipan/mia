@@ -48,12 +48,12 @@ class PPEG(nn.Module):
 class TransMIL(nn.Module):
     def __init__(self, d_in):
         super(TransMIL, self).__init__()
-        self.pos_layer = PPEG(dim=512)
-        self._fc1 = nn.Sequential(nn.Linear(d_in, 512), nn.ReLU())
-        self.cls_token = nn.Parameter(torch.randn(1, 1, 512))
-        self.layer1 = TransLayer(dim=512)
-        self.layer2 = TransLayer(dim=512)
-        self.norm = nn.LayerNorm(512)
+        self.pos_layer = PPEG(dim=d_in)
+        self._fc1 = nn.Sequential(nn.Linear(d_in, d_in), nn.ReLU())
+        self.cls_token = nn.Parameter(torch.randn(1, 1, d_in))
+        self.layer1 = TransLayer(dim=d_in)
+        self.layer2 = TransLayer(dim=d_in)
+        self.norm = nn.LayerNorm(d_in)
 
     def forward(self, h):
         # h = kwargs['data'].float()  # [B, n, 1024]
@@ -88,7 +88,7 @@ class TransMIL(nn.Module):
 
 if __name__ == "__main__":
     data = torch.randn((1, 6000, 1024)).cuda()
-    model = TransMIL(d_in=1024, n_classes=2).cuda()
+    model = TransMIL(d_in=256).cuda()
     print(model.eval())
     results_dict = model(data=data)
     print(results_dict)

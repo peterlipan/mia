@@ -98,10 +98,9 @@ def main(gpu, args, wandb_logger):
         n_classes = train_fmri_dataset.n_classes
 
         encoder = get_encoder(args).cuda()
-        n_features = encoder.num_features
         aggregator = get_aggregator(args).cuda()
         # FIXME: the n_features is assigned as 512
-        classifier = get_classifier(512, n_classes).cuda()
+        classifier = get_classifier(args.embed_dim, n_classes).cuda()
 
         e_optimizer = torch.optim.AdamW(encoder.parameters(), lr=args.lr_e, weight_decay=args.weight_decay)
         m_optimizer = torch.optim.AdamW([{'params': aggregator.parameters(), 'params': classifier.parameters()}], lr=args.lr_m, weight_decay=args.weight_decay)
