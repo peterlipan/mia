@@ -155,19 +155,19 @@ def validate(dataloader, encoder, aggregator, classifier):
     with torch.no_grad():
         for step, (img, label) in enumerate(dataloader):
             img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
-
+            bs = img.size(0)
             # img [B, T, C, D, H, W] -> [BxT, C, D, H, W] and feed into the frame encoder
             img = rearrange(img, 'B T C D H W -> (B T) C D H W')
             features = encoder(img)
             # features: [BxT, C] -> [B, T, C]
-            features = rearrange(features, '(B T) C -> B T C', B=img.size(0), T=img.size(1))
+            features = rearrange(features, '(B T) C -> B T C', B=bs)
             features = aggregator(features)
             # features: [B, C]
             logits = classifier(features)
 
             pred = F.softmax(logits, dim=1)
             ground_truth = torch.cat((ground_truth, label))
-            predictions = torch.cat((predictions, pred))  
+            predictions = torch.cat((predictions, pred))
 
         acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa = compute_avg_metrics(ground_truth, predictions, avg='micro')
     encoder.train()
@@ -238,7 +238,7 @@ def direct_training(loaders, models, optimizer, args, logger):
                 dist.all_reduce(loss.div_(dist.get_world_size()))
 
             cur_iter += 1
-            if cur_iter % 100 == 0:
+            if cur_iter % 200 == 0:
                 if args.rank == 0:
                     test_acc, test_f1, test_auc, test_ap, test_bac, test_sens, test_spec, test_prec, test_mcc, test_kappa = validate(
                         test_fmri_loader, encoder, aggregator, classifier)

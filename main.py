@@ -145,6 +145,7 @@ if __name__ == '__main__':
 
     # init wandb
     if not args.debug:
+        wandb.require("core")
         wandb.login(key="cb1e7d54d21d9080b46d2b1ae2a13d895770aa29")
         config = dict()
 

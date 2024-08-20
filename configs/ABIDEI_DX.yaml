@@ -24,7 +24,7 @@ fold: 0
 
 # Training Options
 seed: 42
-batch_size: 2
+batch_size: 1
 image_size: 48
 patch_size: 8
 epochs: 100
