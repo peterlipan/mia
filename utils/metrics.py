@@ -20,8 +20,6 @@ def compute_avg_metrics(ground_truth, activations, avg='micro'):
         ill_avg = None
         avg = 'binary'
 
-    print(predictions)
-    print(ground_truth)
     mean_acc = accuracy_score(y_true=ground_truth, y_pred=predictions)
     f1 = f1_score(y_true=ground_truth, y_pred=predictions, average=avg)
 

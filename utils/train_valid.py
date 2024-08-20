@@ -73,7 +73,7 @@ def train(dataloaders, model, optimizer, scheduler, args, logger):
     # TODO: save the model
 
 
-def expectation_step(encoder, classifier, train_loader, optimizer, args):
+def expectation_step(encoder, classifier, train_loader, optimizer):
     # Expectation step (for one epoch)
     # Freeze the classifier and train the encoder of frames
     # to extimate the distribution of frame-level features
@@ -103,7 +103,7 @@ def expectation_step(encoder, classifier, train_loader, optimizer, args):
     return encoder
 
 
-def maximization_step(encoder, aggregator, classifier, train_loader, test_loader, optimizer, args):
+def maximization_step(encoder, aggregator, classifier, train_loader, optimizer):
     # Maximization step (for one epoch)
     # Freeze the encoder and train the aggregator and classifier
     encoder.eval()
@@ -136,9 +136,10 @@ def maximization_step(encoder, aggregator, classifier, train_loader, test_loader
     return aggregator, classifier
     
 
-def validate(dataloader, model, max_steps=100):
-    training = model.training
-    model.eval()
+def validate(dataloader, encoder, aggregator, classifier):
+    encoder.eval()
+    aggregator.eval()
+    classifier.eval()
 
     ground_truth = torch.Tensor().cuda()
     predictions = torch.Tensor().cuda()
@@ -146,28 +147,30 @@ def validate(dataloader, model, max_steps=100):
     with torch.no_grad():
         for step, (img, label) in enumerate(dataloader):
             img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
-            _, logits = model(img)
+            features = encoder(img)
+            features = aggregator(features)
+            logits = classifier(features)
+
             pred = F.softmax(logits, dim=1)
             ground_truth = torch.cat((ground_truth, label))
-            predictions = torch.cat((predictions, pred))
+            predictions = torch.cat((predictions, pred))  
 
-            # for faster evaluation
-            if step >= max_steps:
-                break      
-
-        acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa = compute_avg_metrics(ground_truth, predictions, avg='macro')
-    model.train(training)
+        acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa = compute_avg_metrics(ground_truth, predictions, avg='micro')
     return acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa
 
 
-def iterative_training(dataloaders, model, optimizer, scheduler, args, logger):
-    encoder, aggregator, classifier = model
+def iterative_training(loaders, models, optimizers, args, logger):
+    train_frame_loader, train_fmri_loader, test_fmri_loader = loaders
+    encoder, aggregator, classifier = models
+    e_optimizer, m_optimizer = optimizers
+
     for epoch in range(args.epochs):
-        encoder = expectation_step(encoder, classifier, dataloaders[0], optimizer, args)
-        aggregator, classifier = maximization_step(encoder, aggregator, classifier, dataloaders[0], dataloaders[1], optimizer, args)
+        encoder = expectation_step(encoder, classifier.module, train_frame_loader, e_optimizer)
+        aggregator, classifier = maximization_step(encoder.module, aggregator, classifier, train_fmri_loader, m_optimizer)
+
         if args.rank == 0:
             test_acc, test_f1, test_auc, test_ap, test_bac, test_sens, test_spec, test_prec, test_mcc, test_kappa = validate(
-                dataloaders[1], model, args.eval_steps)
+                test_fmri_loader, encoder, aggregator, classifier)
             if logger is not None:
                 logger.log({'test': {'Accuracy': test_acc,
                                      'F1 score': test_f1,

@@ -109,7 +109,10 @@ def main(gpu, args, wandb_logger):
             aggregator = DDP(aggregator, device_ids=[gpu])
             classifier = DDP(classifier, device_ids=[gpu])
 
-        train(loaders, model, optimizer, scheduler, args, wandb_logger)
+        dataloaders = (train_frame_loader, train_fmri_loader, test_fmri_loader)
+        models = (encoder, aggregator, classifier)
+        optimizers = (e_optimizer, m_optimizer)
+        
 
 
 if __name__ == '__main__':

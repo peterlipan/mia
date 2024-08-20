@@ -1,2 +1,2 @@
 from .yaml_config_hook import yaml_config_hook
-from .train_valid import train
+from .train_valid import train, iterative_training
