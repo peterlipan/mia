@@ -13,8 +13,11 @@ fmri_csv_path: "./datasets/splits/ABIDEI_fMRI.csv"
 checkpoints: "./checkpoints"
 
 # Model Options
-backbone: "groupvit"
+backbone: "swin"
+aggregator: "pool"
+iterative: False
 embed_dim: 256
+
 
 # Dataset Options
 dataset: "ABIDEI"
@@ -25,13 +28,14 @@ fold: 0
 # Training Options
 seed: 42
 batch_size: 1
-image_size: 48
+image_size: 56
 patch_size: 8
 epochs: 100
 
 # Optimization options
-lr: 2.0e-3
+lr: 2.0e-4
+dropout: 0.3
 lr_e: 2.0e-3
 lr_m: 2.0e-4
-weight_decay: 0.01
+weight_decay: 0.05
 

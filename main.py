@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from models import get_classifier, get_encoder, get_aggregator
+from models import get_classifier, get_encoder, get_aggregator, WholeModel
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from transformers.optimization import get_cosine_schedule_with_warmup
@@ -96,30 +96,42 @@ def main(gpu, args, wandb_logger):
             test_fmri_loader = None
 
         n_classes = train_fmri_dataset.n_classes
+        args.n_classes = n_classes
 
-        encoder = get_encoder(args).cuda()
-        aggregator = get_aggregator(args).cuda()
-        # FIXME: the n_features is assigned as 512
-        classifier = get_classifier(args.embed_dim, n_classes).cuda()
+        if args.iterative:
+            encoder = get_encoder(args).cuda()
+            aggregator = get_aggregator(args).cuda()
+            # FIXME: the n_features is assigned as 512
+            classifier = get_classifier(args.embed_dim, n_classes).cuda()
 
-        e_optimizer = torch.optim.AdamW(encoder.parameters(), lr=args.lr_e, weight_decay=args.weight_decay)
-        m_optimizer = torch.optim.AdamW([{'params': aggregator.parameters(), 'params': classifier.parameters()}], lr=args.lr_m, weight_decay=args.weight_decay)
-        optimizer = torch.optim.AdamW([{'params': encoder.parameters(), 'params': aggregator.parameters(), 'params': classifier.parameters()}], lr=args.lr, weight_decay=args.weight_decay)
+            e_optimizer = torch.optim.AdamW(encoder.parameters(), lr=args.lr_e, weight_decay=args.weight_decay)
+            m_optimizer = torch.optim.AdamW([{'params': aggregator.parameters(), 'params': classifier.parameters()}], lr=args.lr_m, weight_decay=args.weight_decay)
+            optimizer = torch.optim.AdamW([{'params': encoder.parameters(), 'params': aggregator.parameters(), 'params': classifier.parameters()}], lr=args.lr, weight_decay=args.weight_decay)
 
-        if args.world_size > 1:
-            encoder = torch.nn.SyncBatchNorm.convert_sync_batchnorm(encoder)
-            aggregator = torch.nn.SyncBatchNorm.convert_sync_batchnorm(aggregator)
-            classifier = torch.nn.SyncBatchNorm.convert_sync_batchnorm(classifier)
+            if args.world_size > 1:
+                encoder = torch.nn.SyncBatchNorm.convert_sync_batchnorm(encoder)
+                aggregator = torch.nn.SyncBatchNorm.convert_sync_batchnorm(aggregator)
+                classifier = torch.nn.SyncBatchNorm.convert_sync_batchnorm(classifier)
 
-            encoder = DDP(encoder, device_ids=[gpu])
-            aggregator = DDP(aggregator, device_ids=[gpu])
-            classifier = DDP(classifier, device_ids=[gpu])
+                encoder = DDP(encoder, device_ids=[gpu])
+                aggregator = DDP(aggregator, device_ids=[gpu])
+                classifier = DDP(classifier, device_ids=[gpu])
 
-        dataloaders = (train_frame_loader, train_fmri_loader, test_fmri_loader)
-        models = (encoder, aggregator, classifier)
-        optimizers = (e_optimizer, m_optimizer)
-        # iterative_training(dataloaders, models, optimizers, args, wandb_logger)
-        direct_training(dataloaders, models, optimizer, args, wandb_logger)
+            dataloaders = (train_frame_loader, train_fmri_loader, test_fmri_loader)
+            models = (encoder, aggregator, classifier)
+            optimizers = (e_optimizer, m_optimizer)
+            iterative_training(dataloaders, models, optimizers, args, wandb_logger)
+        
+        else:
+            model = WholeModel(args).cuda()
+            optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+            if args.world_size > 1:
+                model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+                model = DDP(model, device_ids=[gpu])
+
+            dataloaders = (train_fmri_loader, test_fmri_loader)
+
+            direct_training(dataloaders, model, optimizer, args, wandb_logger)
 
 
 if __name__ == '__main__':
