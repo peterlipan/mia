@@ -254,7 +254,7 @@ class ShiftedWindowAttention3d(nn.Module):
     ) -> None:
         super().__init__()
         if len(window_size) != 3 or len(shift_size) != 3:
-            raise ValueError("window_size and shift_size must be of length 2")
+            raise ValueError("window_size and shift_size must be of length 3")
 
         self.window_size = window_size  # Wd, Wh, Ww
         self.shift_size = shift_size
@@ -396,9 +396,9 @@ class SwinTransformer3d(nn.Module):
         self,
         patch_size: int = 8,
         embed_dim: int = 256,
-        depths: List[int] = [6, 3, 3],
-        num_heads: List[int] = [4, 4, 4],
-        window_size: List[int] = [7, 7, 7],
+        depths: List[int] = [2, 2],
+        num_heads: List[int] = [2, 2],
+        window_size: List[int] = [3, 3, 3],
         mlp_ratio: float = 4.0,
         dropout: float = 0.0,
         attention_dropout: float = 0.0,

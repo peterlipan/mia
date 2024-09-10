@@ -28,7 +28,7 @@ fold: 0
 # Training Options
 seed: 42
 batch_size: 1
-image_size: 56
+image_size: 64
 patch_size: 8
 epochs: 100
 
@@ -38,4 +38,6 @@ dropout: 0.3
 lr_e: 2.0e-3
 lr_m: 2.0e-4
 weight_decay: 0.05
+warmup_epochs: 10
+scheduler: True
 

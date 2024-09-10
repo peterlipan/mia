@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from transformers.optimization import get_cosine_schedule_with_warmup
 from utils import yaml_config_hook, train, iterative_training, direct_training
 from sklearn.model_selection import KFold
+from transformers.optimization import get_cosine_schedule_with_warmup
 from datasets import AbideFrameDataset, FrameTransform, FmriTransform, AbideFmriDataset
 
 
@@ -123,15 +124,22 @@ def main(gpu, args, wandb_logger):
             iterative_training(dataloaders, models, optimizers, args, wandb_logger)
         
         else:
+            step_per_epoch = len(train_fmri_dataset) // (args.batch_size * args.world_size)
             model = WholeModel(args).cuda()
             optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+
+            if args.scheduler:
+                scheduler = get_cosine_schedule_with_warmup(optimizer, args.warmup_epochs * step_per_epoch, args.epochs * step_per_epoch)
+            else:
+                scheduler = None
+            
             if args.world_size > 1:
                 model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
                 model = DDP(model, device_ids=[gpu])
 
             dataloaders = (train_fmri_loader, test_fmri_loader)
 
-            direct_training(dataloaders, model, optimizer, args, wandb_logger)
+            direct_training(dataloaders, model, optimizer, scheduler, args, wandb_logger)
 
 
 if __name__ == '__main__':

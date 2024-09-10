@@ -224,7 +224,7 @@ def direct_validate(dataloader, model):
     return acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa
 
 
-def direct_training(loaders, model, optimizer, args, logger):
+def direct_training(loaders, model, optimizer, scheduler, args, logger):
     train_fmri_loader, test_fmri_loader = loaders
 
     criteria = nn.CrossEntropyLoss().cuda()
@@ -240,9 +240,14 @@ def direct_training(loaders, model, optimizer, args, logger):
             logits = model(img)
             loss = criteria(logits, label)
 
+            if args.rank == 0:
+                train_loss = loss.item()
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
 
             if dist.is_available() and dist.is_initialized():
                 loss = loss.data.clone()
@@ -251,6 +256,7 @@ def direct_training(loaders, model, optimizer, args, logger):
             cur_iter += 1
             if cur_iter % 200 == 0:
                 if args.rank == 0:
+                    cur_lr = optimizer.param_groups[0]['lr']
                     test_acc, test_f1, test_auc, test_ap, test_bac, test_sens, test_spec, test_prec, test_mcc, test_kappa = direct_validate(test_fmri_loader, model)
                     print(f"Epoch: {epoch} / {args.epochs} || Iter: {cur_iter} || Test Acc: {test_acc} || Test F1: {test_f1} || Test AUC: {test_auc}")
                     if logger is not None:
@@ -263,4 +269,6 @@ def direct_training(loaders, model, optimizer, args, logger):
                                             'Specificity': test_spec,
                                             'Precision': test_prec,
                                             'MCC': test_mcc,
-                                            'Kappa': test_kappa}}, )
+                                            'Kappa': test_kappa},
+                                    'train': {'loss': train_loss,
+                                              'lr': cur_lr}}, )
