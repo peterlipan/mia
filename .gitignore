@@ -9,6 +9,9 @@ __pycache__/
 # wandb
 wandb/
 
+# checkpoints
+checkpoints/
+
 # C extensions
 *.so
 

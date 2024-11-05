@@ -4,6 +4,7 @@ import wandb
 import argparse
 import numpy as np
 import pandas as pd
+from datetime import timedelta
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from models import get_classifier, get_encoder, get_aggregator, WholeModel
@@ -25,7 +26,7 @@ def main(gpu, args, wandb_logger):
     args.device = rank
 
     if args.world_size > 1:
-        dist.init_process_group("nccl", rank=rank, world_size=args.world_size)
+        dist.init_process_group("nccl", rank=rank, world_size=args.world_size, timeout=timedelta(hours=12))
         torch.cuda.set_device(rank)
 
     torch.manual_seed(args.seed)
@@ -70,40 +71,47 @@ def main(gpu, args, wandb_logger):
             train_frame_sampler = None
             train_fmri_sampler = None
 
-        train_frame_loader = DataLoader(
-            train_frame_dataset,
-            batch_size=args.batch_size,
-            shuffle=(train_frame_sampler is None),
-            drop_last=True,
-            num_workers=args.workers,
-            sampler=train_frame_sampler,
-            pin_memory=True,
-        )
-        train_fmri_loader = DataLoader(
-            train_fmri_dataset,
-            batch_size=args.batch_size,
-            shuffle=(train_fmri_sampler is None),
-            collate_fn=train_fmri_dataset.collate_fn,
-            drop_last=True,
-            num_workers=args.workers,
-            sampler=train_fmri_sampler,
-            pin_memory=True,
-        )
-
-        if rank == 0:
-            test_fmri_dataset = AbideFmriDataset(test_fmri_csv, args.fmri_data_root, task=args.task, transforms=fmri_test_transforms)
-            test_fmri_loader = DataLoader(test_fmri_dataset, batch_size=args.batch_size, collate_fn=test_fmri_dataset.collate_fn, shuffle=False, num_workers=args.workers, pin_memory=True)
-        else:
-            test_fmri_loader = None
-
         n_classes = train_fmri_dataset.n_classes
         args.n_classes = n_classes
 
         if args.iterative:
-            encoder = get_encoder(args).cuda()
-            aggregator = get_aggregator(args).cuda()
+            train_frame_loader = DataLoader(
+                train_frame_dataset,
+                batch_size=args.e_bs,
+                shuffle=(train_frame_sampler is None),
+                drop_last=True,
+                num_workers=args.workers,
+                sampler=train_frame_sampler,
+                pin_memory=True,
+            )
+            train_fmri_loader = DataLoader(
+                train_fmri_dataset,
+                batch_size=args.m_bs,
+                shuffle=(train_fmri_sampler is None),
+                collate_fn=train_fmri_dataset.collate_fn,
+                drop_last=True,
+                num_workers=args.workers,
+                sampler=train_fmri_sampler,
+                pin_memory=True,
+            )
+
+            if rank == 0:
+                test_fmri_dataset = AbideFmriDataset(test_fmri_csv, args.fmri_data_root, task=args.task, transforms=fmri_test_transforms)
+                test_fmri_loader = DataLoader(test_fmri_dataset, batch_size=args.batch_size, collate_fn=test_fmri_dataset.collate_fn, shuffle=False, num_workers=args.workers, pin_memory=True)
+            else:
+                test_fmri_loader = None
+            
+            encoder = get_encoder(args)
+            aggregator = get_aggregator(args)
             # FIXME: the n_features is assigned as 512
-            classifier = get_classifier(args.embed_dim, n_classes).cuda()
+            classifier = get_classifier(args.embed_dim, n_classes)
+
+            if args.resume:
+                encoder.load_state_dict(torch.load(os.path.join(args.checkpoints, 'encoder_2.pth')))
+                aggregator.load_state_dict(torch.load(os.path.join(args.checkpoints, 'aggregator_2.pth')))
+                classifier.load_state_dict(torch.load(os.path.join(args.checkpoints, 'classifier_2.pth')))
+            
+            encoder, aggregator, classifier = encoder.cuda(), aggregator.cuda(), classifier.cuda()
 
             e_optimizer = torch.optim.AdamW(encoder.parameters(), lr=args.lr_e, weight_decay=args.weight_decay)
             m_optimizer = torch.optim.AdamW([{'params': aggregator.parameters(), 'params': classifier.parameters()}], lr=args.lr_m, weight_decay=args.weight_decay)
@@ -124,6 +132,32 @@ def main(gpu, args, wandb_logger):
             iterative_training(dataloaders, models, optimizers, args, wandb_logger)
         
         else:
+            train_frame_loader = DataLoader(
+                train_frame_dataset,
+                batch_size=args.batch_size,
+                shuffle=(train_frame_sampler is None),
+                drop_last=True,
+                num_workers=args.workers,
+                sampler=train_frame_sampler,
+                pin_memory=True,
+            )
+            train_fmri_loader = DataLoader(
+                train_fmri_dataset,
+                batch_size=args.batch_size,
+                shuffle=(train_fmri_sampler is None),
+                collate_fn=train_fmri_dataset.collate_fn,
+                drop_last=True,
+                num_workers=args.workers,
+                sampler=train_fmri_sampler,
+                pin_memory=True,
+            )
+
+            if rank == 0:
+                test_fmri_dataset = AbideFmriDataset(test_fmri_csv, args.fmri_data_root, task=args.task, transforms=fmri_test_transforms)
+                test_fmri_loader = DataLoader(test_fmri_dataset, batch_size=args.batch_size, collate_fn=test_fmri_dataset.collate_fn, shuffle=False, num_workers=args.workers, pin_memory=True)
+            else:
+                test_fmri_loader = None
+
             step_per_epoch = len(train_fmri_dataset) // (args.batch_size * args.world_size)
             model = WholeModel(args).cuda()
             optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -135,7 +169,7 @@ def main(gpu, args, wandb_logger):
             
             if args.world_size > 1:
                 model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-                model = DDP(model, device_ids=[gpu])
+                model = DDP(model, device_ids=[gpu], find_unused_parameters=True)
 
             dataloaders = (train_fmri_loader, test_fmri_loader)
 
@@ -167,10 +201,7 @@ if __name__ == '__main__':
     if not args.debug:
         wandb.require("core")
         wandb.login(key="cb1e7d54d21d9080b46d2b1ae2a13d895770aa29")
-        config = dict()
-
-        for k, v in yaml_config.items():
-            config[k] = v
+        config = vars(args)
 
         wandb_logger = wandb.init(
             project=f"{args.dataset}_{args.task}",

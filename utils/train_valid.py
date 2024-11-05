@@ -2,9 +2,11 @@ import os
 import torch
 import wandb
 import time
+import shutil
 import numpy as np
 import pandas as pd
 from torch import nn
+from einops import rearrange
 import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
 import torch.distributed as dist
@@ -74,7 +76,7 @@ def train(dataloaders, model, optimizer, scheduler, args, logger):
     # TODO: save the model
 
 
-def expectation_step(encoder, aggregator, classifier, train_loader, optimizer):
+def expectation_step(encoder, aggregator, classifier, train_loader, optimizer, logger=None):
     # Expectation step (for one epoch)
     # Freeze the classifier and train the encoder of frames
     # to extimate the distribution of frame-level features
@@ -101,6 +103,8 @@ def expectation_step(encoder, aggregator, classifier, train_loader, optimizer):
         optimizer.step()
 
         print(f"Expectation step: {i} / {len(train_loader)}")
+        if i % 500 == 0 and logger is not None:
+            logger.log({'E Step': {'loss': loss.item()}})
 
         if dist.is_available() and dist.is_initialized():
             loss = loss.data.clone()
@@ -110,7 +114,7 @@ def expectation_step(encoder, aggregator, classifier, train_loader, optimizer):
     return encoder
 
 
-def maximization_step(encoder, aggregator, classifier, train_loader, optimizer):
+def maximization_step(encoder, aggregator, classifier, train_loader, optimizer, logger=None):
     # Maximization step (for one epoch)
     # Freeze the encoder and train the aggregator and classifier
     encoder.eval()
@@ -124,9 +128,14 @@ def maximization_step(encoder, aggregator, classifier, train_loader, optimizer):
         train_loader.sampler.set_epoch(0)
     for i, (img, label) in enumerate(train_loader):
         img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
+        # img: [B, T, C, D, H, W] -> [BxT, C, D, H, W]
+        bs = img.size(0)
+        img = rearrange(img, 'B T C D H W -> (B T) C D H W')
 
         with torch.no_grad():
             features = encoder(img)
+            # features: [BxT, C] -> [B, T, C]
+            features = rearrange(features, '(B T) C -> B T C', B=bs)
 
         fmri_features = aggregator(features)
         logits = classifier(fmri_features)
@@ -140,6 +149,11 @@ def maximization_step(encoder, aggregator, classifier, train_loader, optimizer):
         if dist.is_available() and dist.is_initialized():
             loss = loss.data.clone()
             dist.all_reduce(loss.div_(dist.get_world_size()))
+
+        print(f"Maximization step: {i} / {len(train_loader)}")
+
+        if i % 10 == 0 and logger is not None:
+            logger.log({'M Step': {'loss': loss.item()}})
     print(f'Maximization step finished in {time.time() - start:.4f} sec')
     return aggregator, classifier
     
@@ -168,6 +182,8 @@ def validate(dataloader, encoder, aggregator, classifier):
             pred = F.softmax(logits, dim=1)
             ground_truth = torch.cat((ground_truth, label))
             predictions = torch.cat((predictions, pred))
+            if step > 30:
+                break
 
         acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa = compute_avg_metrics(ground_truth, predictions, avg='micro')
     encoder.train()
@@ -182,9 +198,19 @@ def iterative_training(loaders, models, optimizers, args, logger):
     e_optimizer, m_optimizer = optimizers
 
     for epoch in range(args.epochs):
-        encoder = expectation_step(encoder, aggregator.module, classifier.module, train_frame_loader, e_optimizer)
-        aggregator, classifier = maximization_step(encoder.module, aggregator, classifier, train_fmri_loader, m_optimizer)
+        encoder = expectation_step(encoder, aggregator.module, classifier.module, train_frame_loader, e_optimizer, logger)
+        if os.path.exists(os.path.join(args.checkpoints, f'encoder_{epoch - 1}.pth')):
+            os.remove(os.path.join(args.checkpoints, f'encoder_{epoch - 1}.pth'))
+        torch.save(encoder.module.state_dict(), os.path.join(args.checkpoints, f'encoder_{epoch}.pth'))
 
+        aggregator, classifier = maximization_step(encoder.module, aggregator, classifier, train_fmri_loader, m_optimizer, logger)
+        
+        if os.path.exists(os.path.join(args.checkpoints, f'aggregator_{epoch - 1}.pth')):
+            os.remove(os.path.join(args.checkpoints, f'aggregator_{epoch - 1}.pth'))
+        torch.save(aggregator.module.state_dict(), os.path.join(args.checkpoints, f'aggregator_{epoch}.pth'))
+        if os.path.exists(os.path.join(args.checkpoints, f'classifier_{epoch - 1}.pth')):
+            os.remove(os.path.join(args.checkpoints, f'classifier_{epoch - 1}.pth'))
+        torch.save(classifier.module.state_dict(), os.path.join(args.checkpoints, f'classifier_{epoch}.pth'))
         if args.rank == 0:
             test_acc, test_f1, test_auc, test_ap, test_bac, test_sens, test_spec, test_prec, test_mcc, test_kappa = validate(
                 test_fmri_loader, encoder, aggregator, classifier)

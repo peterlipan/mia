@@ -1,4 +1,5 @@
 import torch
+import random
 import numpy as np
 import torchio as tio
 
@@ -80,13 +81,22 @@ class FmriTransform:
     def random_sampling(sample):
         # pseudo bags
         n = sample.shape[0]
-        p = np.random.uniform(0.3, 1)
+        p = np.random.uniform(0.2, 0.7)
         k = int(n * p)
+        max_k = 96
+        k = min(k, max_k)
         start_idx = np.random.randint(0, n - k + 1)
+
         return sample[start_idx:start_idx + k]
+
+    @staticmethod
+    def fixed_sampling(sample):
+        return sample[:96]
     
     def __call__(self, sample):
         sample = self.transform(sample).data.float()
         if self.training:
             sample = self.random_sampling(sample)
+        else:
+            sample = self.fixed_sampling(sample)
         return sample
