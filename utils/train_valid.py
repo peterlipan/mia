@@ -280,11 +280,11 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
                 dist.all_reduce(loss.div_(dist.get_world_size()))
 
             cur_iter += 1
-            if cur_iter % 200 == 0:
+            if cur_iter % 10 == 1:
                 if args.rank == 0:
                     cur_lr = optimizer.param_groups[0]['lr']
                     test_acc, test_f1, test_auc, test_ap, test_bac, test_sens, test_spec, test_prec, test_mcc, test_kappa = direct_validate(test_fmri_loader, model)
-                    print(f"Epoch: {epoch} / {args.epochs} || Iter: {cur_iter} || Test Acc: {test_acc} || Test F1: {test_f1} || Test AUC: {test_auc}")
+                    print(f"Epoch: {epoch} / {args.epochs} || Iter: {cur_iter} || Test Sens: {test_sens} || Test Spec: {test_spec} || Test ACC: {test_acc}")
                     if logger is not None:
                         logger.log({'test': {'Accuracy': test_acc,
                                             'F1 score': test_f1,

@@ -19,30 +19,23 @@ def register_ABIDE_I(data_root, output_dir):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    fmri_df = pd.DataFrame(columns=['SUB_ID', 'SITE_ID', 'FILE_ID', 'DX_GROUP', 'DSM_IV_TR', 'NUM_FRAMES', 'W', 'H', 'D', 'SPACING'])
-    frame_df = pd.DataFrame(columns=['SUB_ID', 'SITE_ID', 'FILE_ID', 'DX_GROUP', 'DSM_IV_TR', 'FRAME_ID'])
+    roi_df = pd.DataFrame(columns=['SUB_ID', 'SITE_ID', 'FILE_ID', 'DX_GROUP', 'DSM_IV_TR', 'num_roi', 'seq_len'])
 
     # Default preprocessing 
     data_dir = os.path.join(data_root, 'ABIDE_pcp', 'cpac', 'nofilt_noglobal')
-    suffix = '_func_preproc.nii.gz'
+    suffix = '_rois_cc400.1D'
     for index, row in tqdm(official_csv.iterrows()):
         file_path = os.path.join(data_dir, row['FILE_ID'] + suffix)
         if os.path.exists(file_path):
-            file = tio.ScalarImage(file_path)
-            num_frames, w, h, d = file.shape
-            spacing = file.spacing[0]
-            fmri_df = fmri_df._append({'SUB_ID': row['SUB_ID'], 'SITE_ID': row['SITE_ID'], 'FILE_ID': row['FILE_ID'], 'DX_GROUP': row['DX_GROUP'], 
-            'DSM_IV_TR': row['DSM_IV_TR'], 'NUM_FRAMES': num_frames, 'W': w, 'H': h, 'D': d, 'SPACING': spacing}, ignore_index=True)
-            for i in range(num_frames):
-                frame_df = frame_df._append({'SUB_ID': row['SUB_ID'], 'SITE_ID': row['SITE_ID'], 'FILE_ID': row['FILE_ID'], 'DX_GROUP': row['DX_GROUP'], 'DSM_IV_TR': row['DSM_IV_TR'], 'FRAME_ID': i}, ignore_index=True)
+            roi = pd.read_csv(file_path, sep='\t').values
+            roi_df = roi_df._append({'SUB_ID': row['SUB_ID'], 'SITE_ID': row['SITE_ID'], 'FILE_ID': row['FILE_ID'], 'DX_GROUP': row['DX_GROUP'], 'DSM_IV_TR': row['DSM_IV_TR'], 'num_roi': roi.shape[1], 'seq_len': roi.shape[0]}, ignore_index=True)
 
-        fmri_df.to_csv(os.path.join(output_dir, 'ABIDEI_fMRI.csv'), index=False)
-        frame_df.to_csv(os.path.join(output_dir, 'ABIDEI_frames.csv'), index=False)
+        roi_df.to_csv(os.path.join(output_dir, 'ABIDEI_ROI.csv'), index=False)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Register ABIDE I dataset')
-    parser.add_argument('--data_root', type=str, default='/data', help='Root directory of the dataset')
-    parser.add_argument('--output_dir', type=str, default='./splits', help='Output directory')
+    parser.add_argument('--src', type=str, default='/data', help='Root directory of the dataset')
+    parser.add_argument('--dst', type=str, default='./splits', help='Output directory')
     args = parser.parse_args()
-    register_ABIDE_I(args.data_root, args.output_dir)
+    register_ABIDE_I(args.src, args.dst)

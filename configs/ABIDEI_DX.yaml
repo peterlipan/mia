@@ -6,19 +6,15 @@ workers: 0
 visible_gpus: "0,1"
 
 # Paths
-frame_data_root: "/home/featurize/data/ABIDEI_frames"
-fmri_data_root: "/home/featurize/data/ABIDE_pcp/cpac/nofilt_noglobal"
-frame_csv_path: "./datasets/splits/ABIDEI_frames.csv"
-fmri_csv_path: "./datasets/splits/ABIDEI_fMRI.csv"
+data_root: "/home/r20user17/Documents/ABIDE_pcp/cpac/nofilt_noglobal"
+csv_path: "./datasets/splits/ABIDEI_ROI.csv"
 checkpoints: "./checkpoints"
 
 # Model Options
 backbone: "groupvit"
-aggregator: "transmil"
-iterative: True
-embed_dim: 384
-resume: 1
-
+aggregator: "pool"
+embed_dim: 352
+expand: 1
 
 # Dataset Options
 dataset: "ABIDEI"
@@ -28,19 +24,14 @@ fold: 0
 
 # Training Options
 seed: 42
-batch_size: 1
-e_bs: 24
-m_bs: 1
-image_size: 96
-patch_size: 8
+batch_size: 16
+num_roi: 392 # for cc 400 atlas
 epochs: 50
 
 # Optimization options
-lr: 2.0e-3
-dropout: 0.1
-lr_e: 2.0e-3
-lr_m: 2.0e-4
-weight_decay: 0.01
+lr: 2.0e-2
+dropout: 0.5
+weight_decay: 0.1
 warmup_epochs: 10
 scheduler: True
 
