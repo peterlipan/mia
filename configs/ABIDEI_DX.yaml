@@ -12,7 +12,7 @@ checkpoints: "./checkpoints"
 
 # Model Options
 backbone: "groupvit"
-aggregator: "pool"
+aggregator: "maxpool"
 embed_dim: 352
 expand: 1
 
@@ -31,7 +31,7 @@ epochs: 50
 # Optimization options
 lr: 2.0e-2
 dropout: 0.5
-weight_decay: 0.1
+weight_decay: 1.0
 warmup_epochs: 10
 scheduler: True
 

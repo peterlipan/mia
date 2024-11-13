@@ -140,6 +140,10 @@ class AssignAttention(nn.Module):
         return attn
 
     def forward(self, query, key=None, *, value=None, return_attn=False):
+        # q: q-k attention
+        # k: input tokens
+        # v: input tokens
+
         B, N, C = query.shape
         if key is None:
             key = query
@@ -192,7 +196,6 @@ class GroupingBlock(nn.Module):
         dim (int): Dimension of the input.
         out_dim (int): Dimension of the output.
         num_heads (int): Number of heads in the grouping attention.
-        num_output_group (int): Number of output groups.
         norm_layer (nn.Module): Normalization layer to use.
         mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4
         hard (bool): Whether to use hard or soft assignment. Default: True
@@ -208,7 +211,6 @@ class GroupingBlock(nn.Module):
                  out_dim,
                  num_heads,
                  num_group_token,
-                 num_output_group,
                  norm_layer,
                  mlp_ratio=(0.5, 4.0),
                  hard=True,
@@ -221,17 +223,17 @@ class GroupingBlock(nn.Module):
         self.hard = hard
         self.gumbel = gumbel
         self.sum_assign = sum_assign
-        self.num_output_group = num_output_group
         # norm on group_tokens
         self.norm_tokens = norm_layer(dim)
         tokens_dim, channels_dim = [int(x * dim) for x in to_2tuple(mlp_ratio)]
-        self.mlp_inter = Mlp(num_group_token, tokens_dim, num_output_group)
         self.norm_post_tokens = norm_layer(dim)
         # norm on x
         self.norm_x = norm_layer(dim)
+        # cross attention between the input (k) and grouping (q) tokens
         self.pre_assign_attn = CrossAttnBlock(
             dim=dim, num_heads=num_heads, mlp_ratio=4, qkv_bias=True, norm_layer=norm_layer, post_norm=True)
 
+        # assign the q-k cross attention to the input tokens (v)
         self.assign = AssignAttention(
             dim=dim,
             num_heads=1,
@@ -248,28 +250,6 @@ class GroupingBlock(nn.Module):
         else:
             self.reduction = nn.Identity()
 
-    def extra_repr(self):
-        return f'hard={self.hard}, \n' \
-               f'gumbel={self.gumbel}, \n' \
-               f'sum_assign={self.sum_assign}, \n' \
-               f'num_output_group={self.num_output_group}, \n '
-
-    def project_group_token(self, group_tokens):
-        """
-        Args:
-            group_tokens (torch.Tensor): group tokens, [B, S_1, C]
-
-        inter_weight (torch.Tensor): [B, S_2, S_1], S_2 is the new number of
-            group tokens, it's already softmaxed along dim=-1
-
-        Returns:
-            projected_group_tokens (torch.Tensor): [B, S_2, C]
-        """
-        # [B, S_2, C] <- [B, S_1, C]
-        projected_group_tokens = self.mlp_inter(group_tokens.transpose(1, 2)).transpose(1, 2)
-        projected_group_tokens = self.norm_post_tokens(projected_group_tokens)
-        return projected_group_tokens
-
     def forward(self, x, group_tokens, return_attn=False):
         """
         Args:
@@ -281,10 +261,9 @@ class GroupingBlock(nn.Module):
             new_x (torch.Tensor): [B, S_2, C], S_2 is the new number of
                 group tokens
         """
-        group_tokens = self.norm_tokens(group_tokens)
+        projected_group_tokens = self.norm_tokens(group_tokens)
         x = self.norm_x(x)
-        # [B, S_2, C]
-        projected_group_tokens = self.project_group_token(group_tokens)
+        # [B, S_1, C]
         projected_group_tokens = self.pre_assign_attn(projected_group_tokens, x)
         new_x, attn_dict = self.assign(projected_group_tokens, x, return_attn=return_attn)
         new_x += projected_group_tokens
@@ -402,6 +381,8 @@ class CrossAttnBlock(nn.Module):
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
     def forward(self, query, key, *, mask=None):
+        # q: grouping tokens
+        # k: input tokens
         x = query
         x = x + self.drop_path(self.attn(self.norm_q(query), self.norm_k(key), mask=mask))
         x = x + self.drop_path(self.mlp(self.norm2(x)))
@@ -478,8 +459,7 @@ class GroupingLayer(nn.Module):
                  norm_layer=nn.LayerNorm,
                  downsample=None,
                  use_checkpoint=False,
-                 group_projector=None,
-                 zero_init_group_token=False):
+                 ):
 
         super().__init__()
         self.dim = dim
@@ -488,8 +468,7 @@ class GroupingLayer(nn.Module):
         self.num_group_token = num_group_token
         if num_group_token > 0:
             self.group_token = nn.Parameter(torch.zeros(1, num_group_token, dim))
-            if not zero_init_group_token:
-                trunc_normal_(self.group_token, std=.02)
+            trunc_normal_(self.group_token, std=.02)
         else:
             self.group_token = None
 
@@ -513,7 +492,7 @@ class GroupingLayer(nn.Module):
         self.downsample = downsample
         self.use_checkpoint = use_checkpoint
 
-        self.group_projector = group_projector
+
 
     @property
     def with_group_token(self):
@@ -544,13 +523,12 @@ class GroupingLayer(nn.Module):
         """
         if self.with_group_token:
             group_token = self.group_token.expand(x.size(0), -1, -1)
-            if self.group_projector is not None:
-                group_token = group_token + self.group_projector(prev_group_token)
         else:
             group_token = None
 
         B, L, C = x.shape
         cat_x = self.concat_x(x, group_token)
+        # transformer layer
         for blk_idx, blk in enumerate(self.blocks):
             if self.use_checkpoint:
                 cat_x = checkpoint.checkpoint(blk, cat_x)
@@ -560,7 +538,9 @@ class GroupingLayer(nn.Module):
         x, group_token = self.split_x(cat_x)
 
         attn_dict = None
+        # grouping layer
         if self.downsample is not None:
+            # return the group-input attention dict for graph supervision
             x, attn_dict = self.downsample(x, group_token, return_attn=return_attn)
 
         return x, group_token, attn_dict
@@ -593,7 +573,6 @@ class GroupViT1D(nn.Module):
         depths (list[int]): Depth of each stage
         num_heads (list[int]): Number of heads for each stage
         num_group_tokens (list[int]): Number of group tokens for each stage
-        num_output_group (list[int]): Number of output groups for each stage
         hard_assignment (bool): Whether to use hard assignment or not. Default: True
         mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4
         qkv_bias (bool): If True, add a learnable bias to query, key, value. Default: True
@@ -614,8 +593,7 @@ class GroupViT1D(nn.Module):
                  embed_factors=[1, 1],
                  depths=[1, 1],
                  num_heads=[4, 4],
-                 num_group_tokens=[64, 4],
-                 num_output_groups=[4],
+                 num_group_tokens=[64, 0],
                  hard_assignment=True,
                  mlp_ratio=4.,
                  qkv_bias=True,
@@ -629,7 +607,6 @@ class GroupViT1D(nn.Module):
         super().__init__()
         assert len(embed_factors) == len(depths) == len(num_group_tokens)
         assert all(_ == 0 for _ in num_heads) or len(depths) == len(num_heads)
-        assert len(depths) - 1 == len(num_output_groups)
         self.n_regions = n_regions
         self.expand = expand
         self.max_len = n_regions * expand
@@ -644,7 +621,6 @@ class GroupViT1D(nn.Module):
         self.attn_drop_rate = attn_drop_rate
         self.drop_path_rate = drop_path_rate
         self.num_group_tokens = num_group_tokens
-        self.num_output_groups = num_output_groups
 
 
         norm_layer = nn.LayerNorm
@@ -686,22 +662,10 @@ class GroupViT1D(nn.Module):
                     out_dim=out_dim,
                     num_heads=num_heads[i_layer],
                     num_group_token=num_group_tokens[i_layer],
-                    num_output_group=num_output_groups[i_layer],
                     norm_layer=norm_layer,
                     hard=hard_assignment,
                     gumbel=hard_assignment)
 
-            if i_layer > 0 and num_group_tokens[i_layer] > 0:
-                prev_dim = int(embed_dim * embed_factors[i_layer - 1])
-                group_projector = nn.Sequential(
-                    norm_layer(prev_dim),
-                    MixerMlp(num_group_tokens[i_layer - 1], prev_dim // 2, num_group_tokens[i_layer]))
-
-                if dim != prev_dim:
-                    group_projector = nn.Sequential(group_projector, norm_layer(prev_dim),
-                                                    nn.Linear(prev_dim, dim, bias=False))
-            else:
-                group_projector = None
             layer = GroupingLayer(
                 dim=dim,
                 depth=depths[i_layer],
@@ -716,9 +680,7 @@ class GroupViT1D(nn.Module):
                 norm_layer=norm_layer,
                 downsample=downsample,
                 use_checkpoint=use_checkpoint,
-                group_projector=group_projector,
-                # only zero init group token if we have a projection
-                zero_init_group_token=group_projector is not None)
+                )
             self.layers.append(layer)
 
 
@@ -774,4 +736,4 @@ class GroupViT1D(nn.Module):
         # tokens: [B, L, C] -> [B, C, L] -> [B, C, 1] -> [B, C]
         # features = self.avgpool(tokens.permute(0, 2, 1)).squeeze(-1)
 
-        return tokens
+        return tokens, attn_dicts[0]['soft']

@@ -5,9 +5,14 @@ from timm.models.layers import trunc_normal_
 
 
 class Pool(nn.Module):
-    def __init__(self):
+    def __init__(self, method='avgpool'):
         super().__init__()
-        self.pool = nn.AdaptiveAvgPool1d(1)
+        if method == 'avgpool':
+            self.pool = nn.AdaptiveAvgPool1d(1)
+        elif method == 'maxpool':
+            self.pool = nn.AdaptiveMaxPool1d(1)
+        else:
+            raise NotImplementedError(f"Pooling method {method} not implemented")
 
     def forward(self, x):
         # x: [B, T, C]
@@ -35,8 +40,8 @@ def get_aggregator(args):
     if args.aggregator == 'transmil':
         from .TransMIL import TransMIL
         return TransMIL(d_in=args.embed_dim)
-    elif args.aggregator == 'pool':
-        return Pool()
+    elif 'pool' in args.aggregator:
+        return Pool(args.aggregator)
 
 
 class WholeModel(nn.Module):
@@ -49,10 +54,10 @@ class WholeModel(nn.Module):
 
     def forward(self, roi):
         # roi [B, N, T]
-        features = self.encoder(roi)
+        features, group_attn = self.encoder(roi)
         # features: [B, N, C]
         features = self.aggregator(features)
         # features: [B, C]
         logits = self.classifier(features)
 
-        return logits
+        return logits, group_attn

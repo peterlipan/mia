@@ -88,7 +88,7 @@ def main(gpu, args, wandb_logger):
         
         if args.world_size > 1:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-            model = DDP(model, device_ids=[gpu])
+            model = DDP(model, device_ids=[gpu], find_unused_parameters=True)
 
         dataloaders = (train_loader, test_loader)
 

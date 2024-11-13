@@ -14,6 +14,7 @@ from einops import rearrange
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 from .metrics import compute_avg_metrics
+from .losses import GraphAttentionLoss
 
 
 def train(dataloaders, model, optimizer, scheduler, args, logger):
@@ -239,7 +240,7 @@ def direct_validate(dataloader, model):
         for step, (img, label) in enumerate(dataloader):
             img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
             
-            logits = model(img)
+            logits, _ = model(img)
 
             pred = F.softmax(logits, dim=1)
             ground_truth = torch.cat((ground_truth, label))
@@ -254,6 +255,7 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
     train_fmri_loader, test_fmri_loader = loaders
 
     criteria = nn.CrossEntropyLoss().cuda()
+    attn_criteria = GraphAttentionLoss(batch_size=args.batch_size, world_size=args.world_size)
 
     model.train()
     
@@ -263,8 +265,11 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
         for img, label in train_fmri_loader:
             img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
 
-            logits = model(img)
-            loss = criteria(logits, label)
+            logits, attn = model(img)
+            cls_loss = criteria(logits, label)
+            attn_loss = attn_criteria(attn, img)
+
+            loss = cls_loss + attn_loss
 
             if args.rank == 0:
                 train_loss = loss.item()
