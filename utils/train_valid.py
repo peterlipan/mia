@@ -269,10 +269,12 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
             cls_loss = criteria(logits, label)
             attn_loss = attn_criteria(attn, img)
 
-            loss = cls_loss + attn_loss
+            loss = cls_loss + attn_loss * args.lambda_attn
 
             if args.rank == 0:
                 train_loss = loss.item()
+                cls_loss_value = cls_loss.item()
+                attn_loss_value = attn_loss.item()
 
             optimizer.zero_grad()
             loss.backward()
@@ -302,4 +304,6 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
                                             'MCC': test_mcc,
                                             'Kappa': test_kappa},
                                     'train': {'loss': train_loss,
+                                            'cls_loss': cls_loss_value,
+                                            'attn_loss': attn_loss_value,
                                               'lr': cur_lr}}, )

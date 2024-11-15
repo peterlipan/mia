@@ -14,7 +14,7 @@ from transformers.optimization import get_cosine_schedule_with_warmup
 from utils import yaml_config_hook, train, iterative_training, direct_training
 from sklearn.model_selection import KFold
 from transformers.optimization import get_cosine_schedule_with_warmup
-from datasets import AbideROIDataset
+from datasets import AbideROIDataset, Transforms
 
 
 def main(gpu, args, wandb_logger):
@@ -35,6 +35,8 @@ def main(gpu, args, wandb_logger):
     # load data file
     csv_file = pd.read_csv(args.csv_path)
 
+    transforms = Transforms(args.time_length)
+
     kf = KFold(n_splits=args.KFold, shuffle=True, random_state=args.seed)
     unique_patient = pd.unique(csv_file['SUB_ID'])
 
@@ -48,7 +50,7 @@ def main(gpu, args, wandb_logger):
         train_csv = csv_file[csv_file['SUB_ID'].isin(train_patient_idx)]
         test_csv = csv_file[csv_file['SUB_ID'].isin(test_patient_idx)]
 
-        train_dataset = AbideROIDataset(train_csv, args.data_root, seq_len=args.embed_dim, task=args.task)
+        train_dataset = AbideROIDataset(train_csv, args.data_root, task=args.task, transforms=transforms.train_transforms)
 
         # set sampler for parallel training
         if args.world_size > 1:
@@ -72,14 +74,14 @@ def main(gpu, args, wandb_logger):
         )
 
         if rank == 0:
-            test_dataset = AbideROIDataset(test_csv, args.data_root, seq_len=args.embed_dim, task=args.task)
+            test_dataset = AbideROIDataset(test_csv, args.data_root, task=args.task, transforms=transforms.test_transforms)
             test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
         else:
             test_loader = None
 
         step_per_epoch = len(train_dataset) // (args.batch_size * args.world_size)
         model = WholeModel(args).cuda()
-        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
 
         if args.scheduler:
             scheduler = get_cosine_schedule_with_warmup(optimizer, args.warmup_epochs * step_per_epoch, args.epochs * step_per_epoch)

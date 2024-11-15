@@ -547,15 +547,15 @@ class GroupingLayer(nn.Module):
 
 
 class TokenEmbedder(nn.Module):
-    def __init__(self, n_regions, embed_dim, expand=1, norm_layer=None):
+    def __init__(self, n_regions, embed_dim, region_expand=1, time_expand=1, norm_layer=None):
         super(TokenEmbedder, self).__init__()
         # Keep the time-series length
-        self.conv = nn.Conv1d(in_channels=n_regions, out_channels=n_regions * expand, kernel_size=5, stride=1, padding='same')
-        self.norm_layer = norm_layer(embed_dim)
+        self.linear = nn.Linear(embed_dim, embed_dim * time_expand)
+        self.norm_layer = norm_layer(embed_dim * time_expand) if norm_layer is not None else None
 
     def forward(self, x):
         # x shape: [B, R, T], R region as channel and T time as length
-        x = self.conv(x)  # Shape: [B, R*expand, T]
+        x = self.linear(x)
         if self.norm_layer is not None:
             x = self.norm_layer(x)
         return x
@@ -589,11 +589,11 @@ class GroupViT1D(nn.Module):
     def __init__(self,
                  n_regions=400,
                  expand=2,
-                 embed_dim=128,
-                 embed_factors=[1, 1],
-                 depths=[1, 1],
-                 num_heads=[4, 4],
-                 num_group_tokens=[64, 0],
+                 time_length=128,
+                 embed_factors=[1],
+                 depths=[1],
+                 num_heads=[4],
+                 num_group_tokens=[32],
                  hard_assignment=True,
                  mlp_ratio=4.,
                  qkv_bias=True,
@@ -605,15 +605,13 @@ class GroupViT1D(nn.Module):
                  use_checkpoint=False,
                  freeze_patch_embed=False):
         super().__init__()
-        assert len(embed_factors) == len(depths) == len(num_group_tokens)
-        assert all(_ == 0 for _ in num_heads) or len(depths) == len(num_heads)
         self.n_regions = n_regions
         self.expand = expand
         self.max_len = n_regions * expand
         self.num_layers = len(depths)
-        self.embed_dim = embed_dim
+        self.embed_dim = time_length
         self.patch_norm = patch_norm
-        self.num_features = int(embed_dim * embed_factors[len(depths) - 1])
+        self.num_features = int(self.embed_dim * embed_factors[len(depths) - 1])
         self.mlp_ratio = mlp_ratio
         self.qkv_bias = qkv_bias
         self.qk_scale = qk_scale
@@ -626,11 +624,15 @@ class GroupViT1D(nn.Module):
         norm_layer = nn.LayerNorm
 
         # split image into non-overlapping patches
-        self.patch_embed = TokenEmbedder(
-            n_regions=n_regions,
-            embed_dim=embed_dim,
-            expand=expand,
-            norm_layer=norm_layer if self.patch_norm else None)
+        if embed_factors[0] > 0:
+            self.patch_embed = TokenEmbedder(
+                n_regions=n_regions,
+                embed_dim=time_length,
+                region_expand=expand,
+                time_expand=embed_factors[0],
+                norm_layer=norm_layer if self.patch_norm else None)
+        else:
+            self.patch_embed = None
 
 
         self.avgpool = nn.AdaptiveAvgPool1d(1)
@@ -653,18 +655,16 @@ class GroupViT1D(nn.Module):
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
 
-            dim = int(embed_dim * embed_factors[i_layer])
-            downsample = None
-            if i_layer < self.num_layers - 1:
-                out_dim = embed_dim * embed_factors[i_layer + 1]
-                downsample = GroupingBlock(
-                    dim=dim,
-                    out_dim=out_dim,
-                    num_heads=num_heads[i_layer],
-                    num_group_token=num_group_tokens[i_layer],
-                    norm_layer=norm_layer,
-                    hard=hard_assignment,
-                    gumbel=hard_assignment)
+            dim = int(self.embed_dim * embed_factors[i_layer])
+
+            downsample = GroupingBlock(
+                dim=dim,
+                out_dim=dim,
+                num_heads=num_heads[i_layer],
+                num_group_token=num_group_tokens[i_layer],
+                norm_layer=norm_layer,
+                hard=hard_assignment,
+                gumbel=hard_assignment)
 
             layer = GroupingLayer(
                 dim=dim,
@@ -683,13 +683,12 @@ class GroupViT1D(nn.Module):
                 )
             self.layers.append(layer)
 
-
         self.norm = norm_layer(self.num_features)
 
         self.apply(self._init_weights)
 
     def build_simple_position_embedding(self):
-        pos_embed = nn.Parameter(torch.zeros(1, self.max_len, self.embed_dim))
+        pos_embed = nn.Parameter(torch.zeros(1, self.max_len, self.num_features))
         trunc_normal_(pos_embed, std=.02)
         return pos_embed
     
@@ -715,7 +714,8 @@ class GroupViT1D(nn.Module):
 
     def forward_features(self, x, *, return_attn=False):
         B = x.shape[0]
-        x = self.patch_embed(x)
+        if self.patch_embed is not None:
+            x = self.patch_embed(x)
 
         x = x + self.get_pos_embed()
         x = self.pos_drop(x)

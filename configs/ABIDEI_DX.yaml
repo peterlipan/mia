@@ -13,8 +13,9 @@ checkpoints: "./checkpoints"
 # Model Options
 backbone: "groupvit"
 aggregator: "maxpool"
-embed_dim: 352
-expand: 1
+time_length: 256
+region_expand: 1
+time_expand: 1
 
 # Dataset Options
 dataset: "ABIDEI"
@@ -24,14 +25,14 @@ fold: 0
 
 # Training Options
 seed: 42
-batch_size: 16
+batch_size: 8
 num_roi: 392 # for cc 400 atlas
 epochs: 50
 
 # Optimization options
-lr: 2.0e-2
-dropout: 0.5
-weight_decay: 1.0
+lr: 0.0005
+dropout: 0.1
+weight_decay: 0.01
 warmup_epochs: 10
 scheduler: True
-
+lambda_attn: 0.0
