@@ -80,6 +80,16 @@ class RandomRegionShuffle(BasicAugmentation):
         return x
 
 
+class RandomRegionDropout(BasicAugmentation):
+    def __init__(self, p=0.5, drop_prob=0.1):
+        super().__init__(p)
+        self.drop_prob = drop_prob
+
+    def augment(self, x):
+        mask = np.random.choice([0, 1], size=x.shape[0], p=[self.drop_prob, 1-self.drop_prob])
+        return x * mask[:, np.newaxis]
+
+
 class RandomCropOrPad(BasicAugmentation):
     def __init__(self, p=1, max_pad=10):
         super().__init__(p)
@@ -133,6 +143,7 @@ class Transforms:
     def __init__(self, max_time_length):
         self.train_transforms = Compose([
             RandomRegionShuffle(),
+            RandomRegionDropout(),
             RandomGaussianNoise(),
             OneOf([
                 RandomFrequencyNoise(),

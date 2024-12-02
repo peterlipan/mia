@@ -114,11 +114,11 @@ class AbideFmriDataset(Dataset):
 
 
 class AbideROIDataset(Dataset):
-    def __init__(self, csv, data_root, suffix='_rois_cc400.1D', task='DX', transforms=None):
+    def __init__(self, csv, data_root, atals='cc400', task='DX', transforms=None):
         self.csv = csv
         self.filenames = csv['FILE_ID'].values
         self.labels = csv['DX_GROUP'].values
-        self.suffix = suffix
+        self.suffix = f"_rois_{atals}.1D"
         self.data_root = data_root
         self.transforms = transforms
         self.n_classes = len(np.unique(self.labels))

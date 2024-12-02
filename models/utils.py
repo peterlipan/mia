@@ -29,10 +29,13 @@ def get_classifier(n_features, n_classes):
 def get_encoder(args):
     if args.backbone == 'groupvit':
         from .GroupViT1D import GroupViT1D
-        return GroupViT1D(n_regions=args.num_roi, expand=args.region_expand, time_length=args.time_length, embed_factors=[args.time_expand], drop_rate=args.dropout)
+        return GroupViT1D(n_regions=args.num_roi, expand=args.region_expand, time_length=args.time_length, drop_rate=args.dropout)
     elif args.backbone == 'swin':
         from .Swin3D import SwinTransformer3d
         return SwinTransformer3d(patch_size=args.patch_size, embed_dim=args.embed_dim, dropout=args.dropout) 
+    elif args.backbone == 'MLP':
+        from .MLP import MultiLayerPerceptron
+        return MultiLayerPerceptron(input_dim=args.time_length, hidden_dim=args.embed_dim, output_dim=args.embed_dim)
     else:
         raise NotImplementedError(f"Model {args.model} not implemented")
 
