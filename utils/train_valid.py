@@ -10,11 +10,10 @@ from einops import rearrange
 import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
 import torch.distributed as dist
-from einops import rearrange
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 from .metrics import compute_avg_metrics
-from .losses import GraphAttentionLoss
+from .losses import GraphAttentionLoss, SemiSupervisedContrast
 
 
 def train(dataloaders, model, optimizer, scheduler, args, logger):
@@ -237,7 +236,7 @@ def direct_validate(dataloader, model):
     predictions = torch.Tensor().cuda()
 
     with torch.no_grad():
-        for step, (img, label) in enumerate(dataloader):
+        for step, (img, label, _, _) in enumerate(dataloader):
             img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
             
             logits, _ = model(img)
@@ -255,26 +254,32 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
     train_fmri_loader, test_fmri_loader = loaders
 
     criteria = nn.CrossEntropyLoss().cuda()
-    attn_criteria = GraphAttentionLoss(batch_size=args.batch_size, world_size=args.world_size)
+    con_criteria = SemiSupervisedContrast(batch_size=args.batch_size, world_size=args.world_size)
 
     model.train()
     
     cur_iter = 0
     
     for epoch in range(args.epochs):
-        for img, label in train_fmri_loader:
+        for img, label, num_fea, str_fea in train_fmri_loader:
             img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
+            num_fea, str_fea = num_fea.cuda(non_blocking=True), str_fea.cuda(non_blocking=True)
 
-            logits, attn = model(img)
+            # [B, V] -> [B V,]
+            label = rearrange(label, 'B V -> (B V)')
+            num_fea = rearrange(num_fea, 'B V n -> (B V) n')
+            str_fea = rearrange(str_fea, 'B V s -> (B V) s')
+
+            logits, con_fea = model(img)
+            phenotypes = torch.cat((num_fea, str_fea), dim=1)
             cls_loss = criteria(logits, label)
-            attn_loss = attn_criteria(attn, img)
-
-            loss = cls_loss + attn_loss * args.lambda_attn
+            con_loss = con_criteria(con_fea, phenotypes)
+            loss = cls_loss + con_loss    
 
             if args.rank == 0:
                 train_loss = loss.item()
-                cls_loss_value = cls_loss.item()
-                attn_loss_value = attn_loss.item()
+                cls_loss_val = cls_loss.item()
+                con_loss_val = con_loss.item()
 
             optimizer.zero_grad()
             loss.backward()
@@ -304,6 +309,6 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
                                             'MCC': test_mcc,
                                             'Kappa': test_kappa},
                                     'train': {'loss': train_loss,
-                                            'cls_loss': cls_loss_value,
-                                            'attn_loss': attn_loss_value,
+                                            'cls_loss': cls_loss_val,
+                                            'con_loss': con_loss_val,
                                               'lr': cur_lr}}, )

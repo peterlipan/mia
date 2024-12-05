@@ -4,8 +4,10 @@ import pandas as pd
 import numpy as np
 import torchio as tio
 from nilearn import image
+from einops import rearrange
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
+from sklearn.preprocessing import OneHotEncoder
 
 
 class AbideFrameDataset(Dataset):
@@ -114,14 +116,37 @@ class AbideFmriDataset(Dataset):
 
 
 class AbideROIDataset(Dataset):
-    def __init__(self, csv, data_root, atals='cc400', task='DX', transforms=None):
+    def __init__(self, csv, data_root, n_views, atlas='cc400', task='DX', transforms=None):
         self.csv = csv
+        # keep consistent with the nan filling strategy
+        csv = csv.fillna(-9999)
+
         self.filenames = csv['FILE_ID'].values
         self.labels = csv['DX_GROUP'].values
-        self.suffix = f"_rois_{atals}.1D"
+        self.suffix = f"_rois_{atlas}.1D"
+        self.n_views = n_views
         self.data_root = data_root
         self.transforms = transforms
         self.n_classes = len(np.unique(self.labels))
+
+        self.num_fea_names = ['AGE_AT_SCAN', 'HANDEDNESS_SCORES', 'BMI']
+        self.str_fea_names = ['SITE_ID', 'SEX', 'HANDEDNESS_CATEGORY', 'CURRENT_MED_STATUS']
+
+        self.num_fea = csv[self.num_fea_names].values
+        self.str_fea = csv[self.str_fea_names].values
+
+        # TODO: deal with the missing values
+        self.num_fea[self.num_fea == -9999] = 0
+        self.num_fea[self.num_fea == '-9999'] = 0
+        self.str_fea[self.str_fea == -9999] = 'unk'
+        self.str_fea[self.str_fea == '-9999'] = 'unk'
+        # special case. The real-world data!
+        self.str_fea[self.str_fea == '`'] = 'unk'
+
+        self.onehot = OneHotEncoder()
+        self.str_fea = self.onehot.fit_transform(self.str_fea).toarray()
+
+        self.onehot_expand = [len(self.onehot.categories_[i]) for i in range(len(self.str_fea_names))]
     
     def __len__(self):
         return len(self.labels)
@@ -130,11 +155,31 @@ class AbideROIDataset(Dataset):
     def __getitem__(self, idx):
         label = self.labels[idx]
         file_id = self.filenames[idx]
+        num_fea = self.num_fea[idx]
+        str_fea = self.str_fea[idx]
         file_path = os.path.join(self.data_root, self.filenames[idx] + self.suffix)
-        roi = pd.read_csv(file_path, sep='\t').values.T # [seq_len, num_roi] -> [num_roi, seq_len]
+        roi = pd.read_csv(file_path, sep='\t').values.T # [T, N] -> [N, T]
         if self.transforms:
-            roi = self.transforms(roi)
-        roi = torch.from_numpy(roi).float()
-        label = torch.tensor(label).long()
+            roi = np.stack([self.transforms(roi) for _ in range(self.n_views)], axis=0) # [V, N, T]
+            # make the labels and features consistent with the views
+            label = np.stack([label for _ in range(self.n_views)], axis=0) # [V]
+            num_fea = np.stack([num_fea for _ in range(self.n_views)], axis=0) # [V, n_num]
+            str_fea = np.stack([str_fea for _ in range(self.n_views)], axis=0) # [V, n_str]
+            roi = rearrange(roi, 'v n t -> t v n') # [V, N, T] -> [T, V, N]
+            roi = torch.from_numpy(roi).float() 
 
-        return roi, label
+        else:
+            # [N, T] -> [T, 1, N]
+            roi = torch.from_numpy(roi.T).unsqueeze(1).float()
+
+        return roi, label, num_fea, str_fea
+
+    @staticmethod
+    def collate_fn(batch):
+        data, label, num_fea, str_fea = list(zip(*batch))
+        # pad the sequence on T
+        data = pad_sequence(data, batch_first=True).float()
+        label = torch.tensor(label).long()
+        num_fea = torch.tensor(num_fea).float()
+        str_fea = torch.tensor(str_fea).float()
+        return data, label, num_fea, str_fea

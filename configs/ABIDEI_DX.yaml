@@ -3,19 +3,17 @@ nodes: 1
 gpus: 2
 nr: 0
 workers: 0
-visible_gpus: "4,5"
+visible_gpus: "2,3"
 
 # Paths
 data_root: "/home/r20user17/Documents/ABIDE_pcp/cpac/nofilt_noglobal"
-csv_path: "./datasets/splits/ABIDEI_ROI.csv"
+csv_root: "./datasets/splits"
 checkpoints: "./checkpoints"
 
 # Model Options
 backbone: "groupvit"
-aggregator: "avgpool"
-time_length: 128
-region_expand: 1
-time_expand: 1
+aggregator: "squeeze"
+embed_dim: 256
 
 # Dataset Options
 dataset: "ABIDEI"
@@ -23,11 +21,11 @@ task: "DX"
 atlas: "cc400"
 KFold: 10
 fold: 0
+n_views: 8
 
 # Training Options
 seed: 42
-batch_size: 32
-num_roi: 392 # for cc 400 atlas
+batch_size: 16
 epochs: 200
 
 # Optimization options

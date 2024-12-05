@@ -1,4 +1,5 @@
 # decouple the encoder and classifier for interative training
+import torch
 from torch import nn
 from einops import rearrange
 from timm.models.layers import trunc_normal_
@@ -35,7 +36,7 @@ def get_encoder(args):
         return SwinTransformer3d(patch_size=args.patch_size, embed_dim=args.embed_dim, dropout=args.dropout) 
     elif args.backbone == 'MLP':
         from .MLP import MultiLayerPerceptron
-        return MultiLayerPerceptron(input_dim=args.time_length, hidden_dim=args.embed_dim, output_dim=args.embed_dim)
+        return MultiLayerPerceptron(input_dim=args.time_length, hidden_dim=args.time_length, output_dim=args.time_length)
     else:
         raise NotImplementedError(f"Model {args.model} not implemented")
 
@@ -45,6 +46,10 @@ def get_aggregator(args):
         return TransMIL(d_in=args.embed_dim)
     elif 'pool' in args.aggregator:
         return Pool(args.aggregator)
+    elif 'identity' in args.aggregator:
+        return nn.Identity()
+    elif 'squeeze' in args.aggregator:
+        return torch.squeeze
 
 
 class WholeModel(nn.Module):

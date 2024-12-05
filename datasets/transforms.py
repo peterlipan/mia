@@ -140,7 +140,7 @@ class OneOf:
 
 
 class Transforms:
-    def __init__(self, max_time_length):
+    def __init__(self):
         self.train_transforms = Compose([
             RandomRegionShuffle(),
             RandomRegionDropout(),
@@ -153,6 +153,5 @@ class Transforms:
                 RandomTimeRoll(max_shift_prop=0.5),
                 RandomTimeWarp(),
             ], p=0.5),
-            RandomCropOrPad(p=1, max_pad=max_time_length),
         ])
-        self.test_transforms = StaticCropOrPad(max_pad=max_time_length)
+        self.test_transforms = None

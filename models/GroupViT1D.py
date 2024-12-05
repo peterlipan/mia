@@ -593,7 +593,7 @@ class GroupViT1D(nn.Module):
                  embed_factors=[1, 1],
                  depths=[2, 2],
                  num_heads=[8, 8],
-                 num_group_tokens=[128, 32],
+                 num_group_tokens=[64, 1],
                  hard_assignment=True,
                  mlp_ratio=4.,
                  qkv_bias=True,
