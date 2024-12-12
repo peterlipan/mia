@@ -1,5 +1,6 @@
 import random
 import numpy as np
+from scipy.signal import resample
 
 
 class BasicAugmentation:
@@ -23,6 +24,19 @@ class RandomGaussianNoise(BasicAugmentation):
 
     def augment(self, x):
         return x + np.random.normal(self.mean, self.std, x.shape)
+
+
+class RandomLaplaceNoise(BasicAugmentation):
+    def __init__(self, p=0.5, loc=0.0, scale=0.01):
+
+        super().__init__(p)
+        self.loc = loc
+        self.scale = scale
+
+    def augment(self, x):
+        # Generate Laplace noise
+        noise = np.random.laplace(self.loc, self.scale, x.shape)
+        return x + noise
 
 
 class RandomTimeRoll(BasicAugmentation):
@@ -80,6 +94,17 @@ class RandomRegionShuffle(BasicAugmentation):
         return x
 
 
+class RandomAmplitudeScaling(BasicAugmentation):
+    def __init__(self, p=0.5, min_scale=0.8, max_scale=1.2):
+        super().__init__(p)
+        self.min_scale = min_scale
+        self.max_scale = max_scale
+
+    def augment(self, x):
+        scale_factor = np.random.uniform(self.min_scale, self.max_scale)
+        return x * scale_factor
+
+
 class RandomRegionDropout(BasicAugmentation):
     def __init__(self, p=0.5, drop_prob=0.1):
         super().__init__(p)
@@ -90,8 +115,92 @@ class RandomRegionDropout(BasicAugmentation):
         return x * mask[:, np.newaxis]
 
 
+class RandomTimeMasking(BasicAugmentation):
+    def __init__(self, p=0.5, max_mask_prop=0.2):
+        super().__init__(p)
+        self.max_mask_prop = max_mask_prop
+
+    def augment(self, x):
+        mask_size = int(x.shape[-1] * self.max_mask_prop)
+        start = np.random.randint(0, x.shape[-1] - mask_size)
+        x[..., start:start+mask_size] = 0
+        return x
+
+
+class RandomFrequencyShift(BasicAugmentation):
+    def __init__(self, p=0.5, max_shift=5):
+        super().__init__(p)
+        self.max_shift = max_shift
+
+    def augment(self, x):
+        x_fft = np.fft.fft(x)
+        shift = np.random.randint(-self.max_shift, self.max_shift)
+        x_fft = np.roll(x_fft, shift)
+        return np.fft.ifft(x_fft).real
+
+
+class RandomFlip(BasicAugmentation):
+    def __init__(self, p=0.5):
+        super().__init__(p)
+
+    def augment(self, x):
+        return np.flip(x, axis=-1)
+
+
+class TimeFrequencyMasking(BasicAugmentation):
+    def __init__(self, p=0.5, max_time_mask=0.2, max_freq_mask=0.2):
+        super().__init__(p)
+        self.max_time_mask = max_time_mask
+        self.max_freq_mask = max_freq_mask
+
+    def augment(self, x):
+        # Time masking
+        time_mask_size = int(x.shape[-1] * self.max_time_mask)
+        time_start = np.random.randint(0, x.shape[-1] - time_mask_size)
+        x[..., time_start:time_start+time_mask_size] = 0
+
+        # Frequency masking
+        freq_mask_size = int(x.shape[0] * self.max_freq_mask)
+        freq_start = np.random.randint(0, x.shape[0] - freq_mask_size)
+        x[freq_start:freq_start+freq_mask_size, ...] = 0
+
+        return x
+
+
+class RandomPhaseShuffling(BasicAugmentation):
+    def __init__(self, p=0.5):
+        super().__init__(p)
+
+    def augment(self, x):
+        x_fft = np.fft.fft(x)
+        random_phase = np.exp(1j * np.random.uniform(0, 2 * np.pi, x_fft.shape))
+        x_fft *= random_phase
+        return np.fft.ifft(x_fft).real
+
+
+class DynamicRangeCompression(BasicAugmentation):
+    def __init__(self, p=0.5, compression_factor=0.5):
+        super().__init__(p)
+        self.compression_factor = compression_factor
+
+    def augment(self, x):
+        return np.sign(x) * (np.abs(x) ** self.compression_factor)
+
+
+class RandomResampling(BasicAugmentation):
+    def __init__(self, p=0.5, min_rate=0.8, max_rate=1.2):
+        super().__init__(p)
+        self.min_rate = min_rate
+        self.max_rate = max_rate
+
+    def augment(self, x):
+        rate = np.random.uniform(self.min_rate, self.max_rate)
+        num_samples = int(x.shape[-1] * rate)
+        return resample(x, num_samples, axis=-1)
+
+
 class RandomCropOrPad(BasicAugmentation):
-    def __init__(self, p=1, max_pad=10):
+    def __init__(self, p=1, max_pad=120):
         super().__init__(p)
         self.max_pad = max_pad
 
@@ -142,16 +251,38 @@ class OneOf:
 class Transforms:
     def __init__(self):
         self.train_transforms = Compose([
-            RandomRegionShuffle(),
-            RandomRegionDropout(),
-            RandomGaussianNoise(),
+            OneOf([
+                RandomGaussianNoise(),
+                RandomLaplaceNoise(),
+            ], p=0.5),
+            
+            OneOf([
+                RandomAmplitudeScaling(),
+                DynamicRangeCompression(),
+            ], p=0.5),
+            
+            OneOf([
+                RandomTimeRoll(),
+                RandomTimeWarp(),
+                RandomTimeMasking(),
+            ], p=0.5),
+
             OneOf([
                 RandomFrequencyNoise(),
                 RandomFrequencyDropout(),
+                RandomFrequencyShift(),
+                RandomPhaseShuffling(),
             ], p=0.5),
+            
             OneOf([
-                RandomTimeRoll(max_shift_prop=0.5),
-                RandomTimeWarp(),
+                TimeFrequencyMasking(),
+                RandomRegionShuffle(),
+                RandomRegionDropout(),
+            ], p=0.5),
+
+            OneOf([
+                RandomCropOrPad(),
+                RandomResampling(),
             ], p=0.5),
         ])
         self.test_transforms = None

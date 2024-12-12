@@ -160,13 +160,14 @@ class AbideROIDataset(Dataset):
         file_path = os.path.join(self.data_root, self.filenames[idx] + self.suffix)
         roi = pd.read_csv(file_path, sep='\t').values.T # [T, N] -> [N, T]
         if self.transforms:
-            roi = np.stack([self.transforms(roi) for _ in range(self.n_views)], axis=0) # [V, N, T]
+            roi = pad_sequence([torch.from_numpy(self.transforms(roi).T) for _ in range(self.n_views)], batch_first=True) # [V, T, N]
+            roi = rearrange(roi, 'v t n -> t v n') # [V, N, T] -> [T, V, N]
+
             # make the labels and features consistent with the views
             label = np.stack([label for _ in range(self.n_views)], axis=0) # [V]
             num_fea = np.stack([num_fea for _ in range(self.n_views)], axis=0) # [V, n_num]
             str_fea = np.stack([str_fea for _ in range(self.n_views)], axis=0) # [V, n_str]
-            roi = rearrange(roi, 'v n t -> t v n') # [V, N, T] -> [T, V, N]
-            roi = torch.from_numpy(roi).float() 
+            
 
         else:
             # [N, T] -> [T, 1, N]
@@ -179,7 +180,7 @@ class AbideROIDataset(Dataset):
         data, label, num_fea, str_fea = list(zip(*batch))
         # pad the sequence on T
         data = pad_sequence(data, batch_first=True).float()
-        label = torch.tensor(label).long()
-        num_fea = torch.tensor(num_fea).float()
-        str_fea = torch.tensor(str_fea).float()
+        label = torch.from_numpy(np.array(label)).long()
+        num_fea = torch.from_numpy(np.array(num_fea)).float()
+        str_fea = torch.from_numpy(np.array(str_fea)).float()
         return data, label, num_fea, str_fea

@@ -13,12 +13,13 @@ class LineaEmbedding(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, n_regions, embed_dim, n_classes, max_len=320, n_heads=8, drop_rate=0.1):
+    def __init__(self, n_regions, embed_dim, n_classes, max_len=1000, n_heads=8, drop_rate=0.1):
         super(Transformer, self).__init__()
 
         self.embedding = LineaEmbedding(n_regions, embed_dim)
         self.positional_encoding = nn.Parameter(torch.zeros(1, max_len, embed_dim))
-        self.attention = nn.MultiheadAttention(embed_dim, n_heads, drop_rate, batch_first=True)
+        self.attention1 = nn.MultiheadAttention(embed_dim, n_heads, drop_rate, batch_first=True)
+        self.attention2 = nn.MultiheadAttention(embed_dim, n_heads, drop_rate, batch_first=True)
         self.classifier = nn.Linear(embed_dim, n_classes)
         self.norm = nn.LayerNorm(embed_dim)
         self.pool = nn.AdaptiveAvgPool1d(1)
@@ -43,7 +44,9 @@ class Transformer(nn.Module):
         x = rearrange(x, 'b t v n -> (b v) t n')
         x = self.embedding(x) # [B V, T, C]
         x = x + self.positional_encoding[:, :T]
-        x = self.attention(x, x, x)[0] # [B V, T, C]
+        x = self.attention1(x, x, x)[0] # [B V, T, C]
+        x = self.norm(x)
+        x = self.attention2(x, x, x)[0]
         x = self.norm(self.pool(x.transpose(1, 2)).squeeze(-1)) # [B V, C]
 
         logits = self.classifier(x) # [B V, n_cls]

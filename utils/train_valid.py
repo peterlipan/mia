@@ -254,7 +254,7 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
     train_fmri_loader, test_fmri_loader = loaders
 
     criteria = nn.CrossEntropyLoss().cuda()
-    con_criteria = SemiSupervisedContrast(batch_size=args.batch_size, world_size=args.world_size)
+    con_criteria = SemiSupervisedContrast(batch_size=args.batch_size, world_size=args.world_size, alpha=args.sup_alpha).cuda()
 
     model.train()
     
@@ -266,6 +266,7 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
             num_fea, str_fea = num_fea.cuda(non_blocking=True), str_fea.cuda(non_blocking=True)
 
             # [B, V] -> [B V,]
+            con_label = label[:, 0].contiguous() # [B, V] -> [B,]
             label = rearrange(label, 'B V -> (B V)')
             num_fea = rearrange(num_fea, 'B V n -> (B V) n')
             str_fea = rearrange(str_fea, 'B V s -> (B V) s')
@@ -273,13 +274,13 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
             logits, con_fea = model(img)
             phenotypes = torch.cat((num_fea, str_fea), dim=1)
             cls_loss = criteria(logits, label)
-            con_loss = con_criteria(con_fea, phenotypes)
-            loss = cls_loss + con_loss    
+            con_loss = con_criteria(con_fea, labels=con_label)
+            loss = cls_loss + args.lambda_con * con_loss    
 
             if args.rank == 0:
                 train_loss = loss.item()
                 cls_loss_val = cls_loss.item()
-                con_loss_val = con_loss.item()
+                con_loss_val = args.lambda_con * con_loss.item()
 
             optimizer.zero_grad()
             loss.backward()
