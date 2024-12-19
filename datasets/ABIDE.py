@@ -129,8 +129,10 @@ class AbideROIDataset(Dataset):
         self.transforms = transforms
         self.n_classes = len(np.unique(self.labels))
 
-        self.num_fea_names = ['AGE_AT_SCAN', 'HANDEDNESS_SCORES', 'BMI']
-        self.str_fea_names = ['SITE_ID', 'SEX', 'HANDEDNESS_CATEGORY', 'CURRENT_MED_STATUS']
+        # self.num_fea_names = ['AGE_AT_SCAN', 'HANDEDNESS_SCORES', 'BMI']
+        # self.str_fea_names = ['SITE_ID', 'SEX', 'HANDEDNESS_CATEGORY', 'CURRENT_MED_STATUS']
+        self.num_fea_names = ['AGE_AT_SCAN']
+        self.str_fea_names = ['SITE_ID', 'SEX']
 
         self.num_fea = csv[self.num_fea_names].values
         self.str_fea = csv[self.str_fea_names].values
@@ -142,6 +144,9 @@ class AbideROIDataset(Dataset):
         self.str_fea[self.str_fea == '-9999'] = 'unk'
         # special case. The real-world data!
         self.str_fea[self.str_fea == '`'] = 'unk'
+
+        # normalize the numerical features by each column
+        self.num_fea = (self.num_fea - self.num_fea.mean(axis=0)) / self.num_fea.std(axis=0)
 
         self.onehot = OneHotEncoder()
         self.str_fea = self.onehot.fit_transform(self.str_fea).toarray()
@@ -160,7 +165,7 @@ class AbideROIDataset(Dataset):
         file_path = os.path.join(self.data_root, self.filenames[idx] + self.suffix)
         roi = pd.read_csv(file_path, sep='\t').values.T # [T, N] -> [N, T]
         if self.transforms:
-            roi = pad_sequence([torch.from_numpy(self.transforms(roi).T) for _ in range(self.n_views)], batch_first=True) # [V, T, N]
+            roi = pad_sequence([torch.from_numpy(np.ascontiguousarray(self.transforms(roi).T)) for _ in range(self.n_views)], batch_first=True) # [V, T, N]
             roi = rearrange(roi, 'v t n -> t v n') # [V, N, T] -> [T, V, N]
 
             # make the labels and features consistent with the views

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from .gather import GatherLayer
 import torch.nn.functional as F
+from einops import rearrange
 
 
 class GraphAttentionLoss(nn.Module):
@@ -100,31 +101,29 @@ class SoftContrastiveLoss(nn.Module):
 
 
 class SupConLoss(nn.Module):
-    """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
-    It also supports the unsupervised contrastive loss in SimCLR"""
-    def __init__(self, temperature=0.07, contrast_mode='all',
+    
+    def __init__(self, soft_weight=0.5, temperature=0.07, contrast_mode='all',
                  base_temperature=0.07):
         super(SupConLoss, self).__init__()
         self.temperature = temperature
         self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
+        self.soft_weight = soft_weight
 
-    def forward(self, features, labels=None, mask=None):
-        """Compute loss for model. If both `labels` and `mask` are None,
-        it degenerates to SimCLR unsupervised loss:
-        https://arxiv.org/pdf/2002.05709.pdf
-
+    def forward(self, features, labels=None, sim=None, mask=None):
+        """
         Args:
             features: hidden vector of shape [bsz, n_views, ...].
             labels: ground truth of shape [bsz].
-            mask: contrastive mask of shape [bsz, bsz], mask_{i,j}=1 if sample j
-                has the same class as sample i. Can be asymmetric.
+            adj: Adjacent matrix of the samples, [bsz, bsz], 0<= mask_{i,j} <=1 
         Returns:
             A loss scalar.
         """
         device = (torch.device('cuda')
                   if features.is_cuda
                   else torch.device('cpu'))
+
+        B, V, C = features.shape
 
         if len(features.shape) < 3:
             raise ValueError('`features` needs to be [bsz, n_views, ...],'
@@ -179,22 +178,35 @@ class SupConLoss(nn.Module):
         exp_logits = torch.exp(logits) * logits_mask
         log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
 
-        # compute mean of log-likelihood over positive
-        # modified to handle edge cases when there is no positive pair
-        # for an anchor point. 
-        # Edge case e.g.:- 
-        # features of shape: [4,1,...]
-        # labels:            [0,1,1,2]
-        # loss before mean:  [nan, ..., ..., nan] 
         mask_pos_pairs = mask.sum(1)
         mask_pos_pairs = torch.where(mask_pos_pairs < 1e-6, 1, mask_pos_pairs)
         mean_log_prob_pos = (mask * log_prob).sum(1) / mask_pos_pairs
 
         # loss
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
-        loss = loss.view(anchor_count, batch_size).mean()
+        hard_contrastive_loss = loss.view(anchor_count, batch_size).mean()
 
-        return loss
+        # soft contrastive Loss
+        if sim is not None:
+            adj = torch.where(sim > 0.5, 1, 0)
+            adj = adj.repeat(anchor_count, contrast_count)
+            adj = adj * logits_mask
+
+            sim = sim.repeat(anchor_count, contrast_count)
+            sim = sim * adj
+
+            mask_adj_pairs = adj.sum(1)
+            mask_adj_pairs = torch.where(mask_adj_pairs < 1e-6, 1, mask_adj_pairs)
+            mean_log_prob_adj = (sim * log_prob).sum(1) / mask_adj_pairs
+
+            soft_contrastive_loss = - (self.temperature / self.base_temperature) * mean_log_prob_adj
+            soft_contrastive_loss = soft_contrastive_loss.view(anchor_count, batch_size).mean()
+
+            total_loss = (1 - self.soft_weight) * hard_contrastive_loss + self.soft_weight * soft_contrastive_loss
+        else:
+            total_loss = hard_contrastive_loss
+
+        return total_loss
 
 
 class SemiSupervisedContrast(nn.Module):
@@ -203,7 +215,7 @@ class SemiSupervisedContrast(nn.Module):
         self.batch_size = batch_size
         self.world_size = world_size
         # self.contrastive_loss = SoftContrastiveLoss(temperature, alpha)
-        self.contrastive_loss = SupConLoss(temperature=temperature)
+        self.contrastive_loss = SupConLoss(temperature=temperature, soft_weight=alpha)
         self.sim = nn.CosineSimilarity(dim=2)
     
     def forward(self, features, phenotypes=None, labels=None):
@@ -219,6 +231,10 @@ class SemiSupervisedContrast(nn.Module):
         # Compute adjacency matrix based on the phenotypic similarities
         if phenotypes is not None:
             adj = self.sim(phenotypes.unsqueeze(1), phenotypes.unsqueeze(0))
+            # normalize the adj matrix
+            adj = F.softmax(adj, dim=1)
+        else:
+            adj = None
         
-        loss = self.contrastive_loss(features, labels)
+        loss = self.contrastive_loss(features, labels, adj)
         return loss

@@ -1,9 +1,9 @@
 # distributed training
 nodes: 1
-gpus: 2
+gpus: 4
 nr: 0
 workers: 0
-visible_gpus: "4,6"
+visible_gpus: "2,3,4,6"
 
 # Paths
 data_root: "/home/r20user17/Documents/ABIDE_pcp/cpac/nofilt_noglobal"
@@ -21,18 +21,18 @@ task: "DX"
 atlas: "cc400"
 KFold: 10
 fold: 0
-n_views: 8
+n_views: 16
 
 # Training Options
 seed: 42
-batch_size: 24
-epochs: 200
+batch_size: 36
+epochs: 400
 
 # Optimization options
-lr: 0.01
+lr: 0.05
 dropout: 0.3
 weight_decay: 0.01
 warmup_epochs: 20
 scheduler: True
-lambda_con: 0.1
+lambda_con: 0.5
 sup_alpha: 0.3
