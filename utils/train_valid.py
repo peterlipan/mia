@@ -270,7 +270,7 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
             label = rearrange(label, 'B V -> (B V)').contiguous() # [B, V] -> [B V,]
 
             logits, con_fea = model(img)
-            phenotypes = torch.cat((num_fea, str_fea), dim=-1)[:, 0].contiguous() # [B, V, K] -> [B, K]
+            phenotypes = torch.cat((num_fea, str_fea), dim=-1).contiguous() # [B, V, K] -> [B, K]
             cls_loss = criteria(logits, label)
             con_loss = con_criteria(con_fea, phenotypes=phenotypes, labels=con_label)
             loss = cls_loss + args.lambda_con * con_loss    

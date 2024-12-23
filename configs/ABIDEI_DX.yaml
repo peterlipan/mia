@@ -3,7 +3,7 @@ nodes: 1
 gpus: 4
 nr: 0
 workers: 0
-visible_gpus: "2,3,4,6"
+visible_gpus: "2,3,4,5"
 
 # Paths
 data_root: "/home/r20user17/Documents/ABIDE_pcp/cpac/nofilt_noglobal"
@@ -25,7 +25,7 @@ n_views: 16
 
 # Training Options
 seed: 42
-batch_size: 36
+batch_size: 26
 epochs: 400
 
 # Optimization options

@@ -131,7 +131,7 @@ class AbideROIDataset(Dataset):
 
         # self.num_fea_names = ['AGE_AT_SCAN', 'HANDEDNESS_SCORES', 'BMI']
         # self.str_fea_names = ['SITE_ID', 'SEX', 'HANDEDNESS_CATEGORY', 'CURRENT_MED_STATUS']
-        self.num_fea_names = ['AGE_AT_SCAN']
+        self.num_fea_names = ['AGE_AT_SCAN', 'BMI']
         self.str_fea_names = ['SITE_ID', 'SEX']
 
         self.num_fea = csv[self.num_fea_names].values
@@ -165,13 +165,11 @@ class AbideROIDataset(Dataset):
         file_path = os.path.join(self.data_root, self.filenames[idx] + self.suffix)
         roi = pd.read_csv(file_path, sep='\t').values.T # [T, N] -> [N, T]
         if self.transforms:
-            roi = pad_sequence([torch.from_numpy(np.ascontiguousarray(self.transforms(roi).T)) for _ in range(self.n_views)], batch_first=True) # [V, T, N]
+            roi = pad_sequence([torch.from_numpy(self.transforms(roi).T) for _ in range(self.n_views)], batch_first=True) # [V, T, N]
             roi = rearrange(roi, 'v t n -> t v n') # [V, N, T] -> [T, V, N]
 
             # make the labels and features consistent with the views
             label = np.stack([label for _ in range(self.n_views)], axis=0) # [V]
-            num_fea = np.stack([num_fea for _ in range(self.n_views)], axis=0) # [V, n_num]
-            str_fea = np.stack([str_fea for _ in range(self.n_views)], axis=0) # [V, n_str]
             
 
         else:
