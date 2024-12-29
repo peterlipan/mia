@@ -18,96 +18,180 @@ class LineaEmbedding(nn.Module):
         return x
 
 
-class ChannelAttention(nn.Module):
-    def __init__(self, in_features, bias=True, activation=F.relu):
+class PositionwiseFeedForward(nn.Module):
+    ''' A two-feed-forward-layer module '''
+
+    def __init__(self, d_in, d_hid, dropout=0.1):
         super().__init__()
-        self.in_features = in_features
-        self.activation = activation
-        self.bias = bias
-        
-        # Use a single projection matrix for Q, K, V
-        self.qkv_proj = nn.Linear(in_features, in_features * 3, bias)
-        self.linear_o = nn.Linear(in_features, in_features, bias)
-    
-    def ScaledDotProductChannelAttention(self, query, key, value, adj=None):
-        dk = query.size()[-1]
-        scores = query.transpose(-2, -1).matmul(key) / math.sqrt(dk)
-        attention = F.softmax(scores, dim=-1)
-        if adj is not None:
-            attention = attention * adj     
-        return value.matmul(attention)
+        self.w_1 = nn.Linear(d_in, d_hid) # position-wise
+        self.w_2 = nn.Linear(d_hid, d_in) # position-wise
+        self.layer_norm = nn.LayerNorm(d_in, eps=1e-6)
+        self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, adj=None):
-        # Project all at once and split
-        qkv = self.qkv_proj(x).chunk(3, dim=-1)
-        q, k, v = map(lambda t: self.activation(t) if self.activation else t, qkv)
+    def forward(self, x):
 
-        y = self.ScaledDotProductChannelAttention(q, k, v, adj)
-        y = self.linear_o(y)
-        
-        # Add residual connection and normalization
-        return y
+        residual = x
 
+        x = self.w_2(F.relu(self.w_1(x)))
+        x = self.dropout(x)
+        x += residual
 
-class GridSelfAttention(nn.Module):
-    def __init__(self, embed_dim, n_heads=8, drop_rate=0.1):
-        super().__init__()
-        self.tkn_attn = nn.MultiheadAttention(embed_dim, n_heads, drop_rate, batch_first=True)
-        self.ch_atten = ChannelAttention(embed_dim)
-        self.cross_atten = nn.MultiheadAttention(embed_dim, n_heads, drop_rate, batch_first=True)
-        self.drop = nn.Dropout(drop_rate)
-        self.norm = nn.LayerNorm(embed_dim)
-        
-        # Add feedforward network
-        self.ffn = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim * 4),
-            nn.GELU(),
-            nn.Dropout(drop_rate),
-            nn.Linear(embed_dim * 4, embed_dim)
-        )
-    
-    def forward(self, x, adj=None):
-        # Channel attention with residual
-        ch = x + self.drop(self.ch_atten(x, adj))
-        
-        # Token attention with residual
-        tkn = x + self.tkn_attn(x, x, x)[0]
+        x = self.layer_norm(x)
 
-        x = self.cross_atten(tkn, ch, ch)[0] + x
-        
-        # FFN with residual
-        x = x + self.drop(self.ffn(self.norm(x)))
         return x
 
 
+class MultiheadChannelAttention(nn.Module):
+    def __init__(self, d_model, n_head=8, d_x=64, dropout=0.1, bias=True):
+        super().__init__()
+        self.d_model = d_model
+        self.norm = nn.LayerNorm(d_model, eps=1e-6)
+        self.dropout = nn.Dropout(dropout)
 
-class Transformer(nn.Module):
-    def __init__(self, n_regions, embed_dim, n_classes, max_len=1000, n_heads=8, drop_rate=0.1, brain_graph='small-world'):
-        super(Transformer, self).__init__()
+        self.d_x = d_x
+        self.n_head = n_head
+        
+        # Use a single projection matrix for Q, K, V
+        self.w_qkv = nn.Linear(d_model, n_head * d_x * 3, bias=bias)
+        self.fc = nn.Linear(n_head * d_x, d_model, bias=bias)
+    
+    def ScaledDotProductChannelAttention(self, query, key, value, adj=None):
+        dx = query.size()[-1]
+        scores = query.transpose(-2, -1).matmul(key) / math.sqrt(dx)
+        attention = F.softmax(scores, dim=-1)
+        if adj is not None:
+            attention = attention * adj
+        attention = self.dropout(attention)     
+        return value.matmul(attention)
 
-        self.embedding = LineaEmbedding(n_regions, n_regions)
-        self.positional_encoding = nn.Parameter(torch.zeros(1, max_len, n_regions))
+    def forward(self, x, adj=None):
+        
+        d_x, n_head = self.d_x, self.n_head
+        sz_b, len_q, _ = x.size()
 
-        self.attention1 = GridSelfAttention(n_regions, n_heads, drop_rate)
-        self.attention2 = GridSelfAttention(embed_dim, n_heads, drop_rate)
-        self.classifier = nn.Linear(embed_dim, n_classes)
+        residual = x
 
-        self.norm = nn.LayerNorm(embed_dim)
+        q, k, v = self.w_qkv(x).chunk(3, dim=-1)
+        q = q.view(sz_b, len_q, n_head, d_x)
+        k = k.view(sz_b, len_q, n_head, d_x)
+        v = v.view(sz_b, len_q, n_head, d_x)
+
+        q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2) # b x n x lq x dx
+        q = self.ScaledDotProductChannelAttention(q, k, v, adj) # b x n x lq x dx
+
+        q = q.transpose(1, 2).contiguous().view(sz_b, len_q, -1) # b x lq x (n*dx)
+        q= self.dropout(self.fc(q))
+
+        q += residual
+        q = self.norm(q)
+        
+        return q
+
+
+class GridEncoderLayer(nn.Module):
+    def __init__(self, d_model, d_inner=1024, n_head=8, d_x=64, dropout=0.1):
+        super().__init__()
+        self.tkn_attn = nn.MultiheadAttention(d_model, n_head, dropout, batch_first=True)
+        self.ch_atten = MultiheadChannelAttention(d_model, n_head, d_x, dropout)
+        self.cross_atten1 = nn.MultiheadAttention(d_model, n_head, dropout, batch_first=True)
+        self.cross_atten2 = nn.MultiheadAttention(d_model, n_head, dropout, batch_first=True)
+        
+        # Add feedforward network
+        self.ffn = PositionwiseFeedForward(d_model, d_inner, dropout=dropout)
+    
+    def forward(self, x, adj=None):
+        # Channel attention with residual
+        ch = self.ch_atten(x, adj)
+        
+        # Token attention with residual
+        tkn = self.tkn_attn(x, x, x)[0]
+
+        x = self.cross_atten1(tkn, ch, ch)[0] + self.cross_atten2(ch, tkn, tkn)[0] / 2
+
+        x = self.ffn(x)
+        return x
+
+
+class SinusoidalPositionalEncoding(nn.Module):
+    def __init__(self, embed_dim, max_len=1000):
+        """
+        Sinusoidal positional encoding for sequences.
+
+        Args:
+            embed_dim (int): The dimensionality of the embedding space.
+            max_len (int): The maximum sequence length to support.
+        """
+        super(SinusoidalPositionalEncoding, self).__init__()
+        
+        # Create a matrix to hold the positional encodings
+        position = torch.arange(0, max_len).unsqueeze(1)  # Shape: [max_len, 1]
+        div_term = torch.exp(torch.arange(0, embed_dim, 2) * (-math.log(10000.0) / embed_dim))  # Shape: [embed_dim // 2]
+
+        # Compute the sinusoidal encodings
+        pe = torch.zeros(max_len, embed_dim)
+        pe[:, 0::2] = torch.sin(position * div_term)  # Apply sin to even indices
+        pe[:, 1::2] = torch.cos(position * div_term)  # Apply cos to odd indices
+
+        # Register as a buffer so it is not updated during training
+        self.register_buffer('pe', pe.unsqueeze(0))  # Shape: [1, max_len, embed_dim]
+
+    def forward(self, x):
+        """
+        Add positional encoding to the input tensor.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape [batch_size, seq_len, embed_dim].
+
+        Returns:
+            torch.Tensor: Input tensor with positional encodings added.
+        """
+        seq_len = x.size(1)  # Get the sequence length from the input
+        return x + self.pe[:, :seq_len, :]
+
+
+class GraphSeq(nn.Module):
+    def __init__(self, d_in, d_model=256, n_classes=2, max_len=1000, n_layers=6, n_head=8, d_x=64,
+            d_inner=512, dropout=0.1, num_phenotype=10, brain_graph="small-world"):
+        super(GraphSeq, self).__init__()
+
+        self.embedding = LineaEmbedding(d_in, d_in)
+        self.positional_encoding = SinusoidalPositionalEncoding(d_in, max_len)
+
+        self.classifier = nn.Linear(d_in, n_classes)
+
+        self.norm1 = nn.LayerNorm(d_in)
+        self.norm2 = nn.LayerNorm(d_in)
         self.pool = nn.AdaptiveAvgPool1d(1)
 
-        self.shadow_layer = nn.Sequential(
-            nn.Linear(n_regions, embed_dim),
-            nn.LayerNorm(embed_dim),
-        )
+        self.drop_out = nn.Dropout(dropout)
+
+        self.layers = nn.ModuleList([
+            GridEncoderLayer(d_in, d_inner, n_head, d_x=d_in, dropout=dropout)
+            for _ in range(n_layers)])
+        
+        self.num_phenotype = num_phenotype
 
         self.contrast_head = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim, bias=False),
+            nn.Linear(d_in, d_in, bias=False),
             nn.ReLU(),
-            nn.Linear(embed_dim, 64, bias=False)
+            nn.Linear(d_in, 64 * self.num_phenotype, bias=False)
         )
         
-        self.adj = self._generate_adj_matrix(n_regions, brain_graph)
-        self.adj = nn.Parameter(self.adj, requires_grad=False)
+        self.adj = self._generate_adj_matrix(d_in, brain_graph)
+        self.adj = nn.Parameter(self.adj, requires_grad=True)
+
+        self._init_params()
+
+    
+    def _init_params(self):
+        for p in self.layers.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+        
+        for p in self.classifier.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+
 
     @staticmethod
     def _generate_adj_matrix(num_nodes, graph_type, **kwargs):
@@ -146,20 +230,30 @@ class Transformer(nn.Module):
             raise ValueError("Unsupported graph type. Choose from 'random', 'scale-free', 'small-world', or 'fully-connected'.")
 
         return torch.tensor(adj_matrix, dtype=torch.float32).unsqueeze(0)
-
+    
+    @staticmethod
+    def _prepare_adj(adj, device):
+        """Prepares the adjacency matrix for use in the model."""
+        adj = adj.to(device)
+        # Ensure the adjacency matrix is symmetric
+        adj = adj.matmul(adj.transpose(-1, -2))
+        # Normalize the adjacency matrix
+        adj = F.softmax(adj, dim=-1)
+        return adj
 
     def forward(self, x):
         # x: [B, T, V, N]
         B, T, V, N = x.shape
-        self.adj = self.adj.to(x.device)
+        adj = self._prepare_adj(self.adj, x.device)
         x = rearrange(x, 'b t v n -> (b v) t n', b=B, v=V)
         x = self.embedding(x) # [B V, T, N]
-        x = x + self.positional_encoding[:, :T]
+        x = self.drop_out(self.positional_encoding(x))
+        x = self.norm1(x)
 
-        x = self.attention1(x, self.adj) # [B V, T, C]
-        x = self.shadow_layer(x) # [B V, T, C]
-        x = self.attention2(x)
-        x = self.norm(self.pool(x.transpose(1, 2)).squeeze(-1)) # [B V, C]
+        for enc_layer in self.layers:
+            x = enc_layer(x, adj)
+
+        x = self.norm2(self.pool(x.transpose(1, 2)).squeeze(-1)) # [B V, C]
 
         logits = self.classifier(x) # [B V, n_cls]
         con_fea = self.contrast_head(x)

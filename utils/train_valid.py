@@ -13,7 +13,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 from .metrics import compute_avg_metrics
-from .losses import GraphAttentionLoss, SemiSupervisedContrast
+from .losses import GraphAttentionLoss, MultiTaskSupervisedContrast
 
 
 def train(dataloaders, model, optimizer, scheduler, args, logger):
@@ -239,7 +239,7 @@ def direct_validate(dataloader, model):
         for step, (img, label, _, _) in enumerate(dataloader):
             img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
             
-            logits, _ = model(img)
+            logits, *_ = model(img)
 
             pred = F.softmax(logits, dim=1)
             ground_truth = torch.cat((ground_truth, label))
@@ -254,31 +254,31 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
     train_fmri_loader, test_fmri_loader = loaders
 
     criteria = nn.CrossEntropyLoss().cuda()
-    con_criteria = SemiSupervisedContrast(batch_size=args.batch_size, world_size=args.world_size, alpha=args.sup_alpha).cuda()
+    con_criteria = MultiTaskSupervisedContrast(batch_size=args.batch_size, world_size=args.world_size, num_phenotype=args.num_cp).cuda()
 
     model.train()
     
     cur_iter = 0
     
     for epoch in range(args.epochs):
-        for img, label, num_fea, str_fea in train_fmri_loader:
+        for img, label, cnp_fea, cp_fea in train_fmri_loader:
             img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
-            num_fea, str_fea = num_fea.cuda(non_blocking=True), str_fea.cuda(non_blocking=True)
+            cnp_fea, cp_fea = cnp_fea.cuda(non_blocking=True), cp_fea.cuda(non_blocking=True)
 
             # [B, V] -> [B V,]
             con_label = label[:, 0].contiguous() # [B, V] -> [B,]
             label = rearrange(label, 'B V -> (B V)').contiguous() # [B, V] -> [B V,]
 
             logits, con_fea = model(img)
-            phenotypes = torch.cat((num_fea, str_fea), dim=-1).contiguous() # [B, V, K] -> [B, K]
+            # phenotypes = torch.cat((cnp_fea, cp_fea), dim=-1).contiguous() # [B, V, K] -> [B, K]
             cls_loss = criteria(logits, label)
-            con_loss = con_criteria(con_fea, phenotypes=phenotypes, labels=con_label)
-            loss = cls_loss + args.lambda_con * con_loss    
+            con_loss = args.lambda_con * con_criteria(con_fea, phenotypes=cp_fea, labels=con_label) # TODO: add cnp
+            loss = cls_loss + con_loss    
 
             if args.rank == 0:
                 train_loss = loss.item()
                 cls_loss_val = cls_loss.item()
-                con_loss_val = args.lambda_con * con_loss.item()
+                con_loss_val = con_loss.item()
 
             optimizer.zero_grad()
             loss.backward()

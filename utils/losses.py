@@ -102,15 +102,14 @@ class SoftContrastiveLoss(nn.Module):
 
 class SupConLoss(nn.Module):
     
-    def __init__(self, soft_weight=0.5, temperature=0.07, contrast_mode='all',
+    def __init__(self, temperature=0.07, contrast_mode='all',
                  base_temperature=0.07):
         super(SupConLoss, self).__init__()
         self.temperature = temperature
         self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
-        self.soft_weight = soft_weight
 
-    def forward(self, features, labels=None, sim=None, mask=None):
+    def forward(self, features, labels=None, mask=None):
         """
         Args:
             features: hidden vector of shape [bsz, n_views, ...].
@@ -184,43 +183,23 @@ class SupConLoss(nn.Module):
 
         # loss
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
-        hard_contrastive_loss = loss.view(anchor_count, batch_size).mean()
+        loss = loss.view(anchor_count, batch_size).mean()
 
-        # soft contrastive Loss
-        if sim is not None:
-            adj = torch.where(sim > 0.5, 1, 0)
-            adj = adj.repeat(anchor_count, contrast_count)
-            adj = adj * logits_mask
-
-            sim = sim.repeat(anchor_count, contrast_count)
-            sim = sim * adj
-
-            mask_adj_pairs = adj.sum(1)
-            mask_adj_pairs = torch.where(mask_adj_pairs < 1e-6, 1, mask_adj_pairs)
-            mean_log_prob_adj = (sim * log_prob).sum(1) / mask_adj_pairs
-
-            soft_contrastive_loss = - (self.temperature / self.base_temperature) * mean_log_prob_adj
-            soft_contrastive_loss = soft_contrastive_loss.view(anchor_count, batch_size).mean()
-
-            total_loss = (1 - self.soft_weight) * hard_contrastive_loss + self.soft_weight * soft_contrastive_loss
-        else:
-            total_loss = hard_contrastive_loss
-
-        return total_loss
+        return loss
 
 
-class SemiSupervisedContrast(nn.Module):
-    def __init__(self, batch_size, world_size, temperature=0.07, alpha=0.5):
+class MultiTaskSupervisedContrast(nn.Module):
+    def __init__(self, batch_size, world_size, num_phenotype, temperature=0.07):
         super().__init__()
         self.batch_size = batch_size
         self.world_size = world_size
-        # self.contrastive_loss = SoftContrastiveLoss(temperature, alpha)
-        self.contrastive_loss = SupConLoss(temperature=temperature, soft_weight=alpha)
+        self.num_phenotype = num_phenotype
+        self.contrastive_loss = SupConLoss(temperature=temperature)
         self.sim = nn.CosineSimilarity(dim=2)
     
-    def forward(self, features, phenotypes=None, labels=None):
+    def forward(self, features, phenotypes=None, labels=None, weights=None):
         # features: (B, n_views, C)
-        # phenotypes: (B, K) K: Number of phenotypes
+        # phenotypes: (B, K) K: Number of category phenotypes
         N = self.world_size * self.batch_size
 
         if self.world_size > 1:
@@ -228,13 +207,16 @@ class SemiSupervisedContrast(nn.Module):
             phenotypes = torch.cat(GatherLayer.apply(phenotypes), dim=0) if phenotypes is not None else None
             labels = torch.cat(GatherLayer.apply(labels), dim=0) if labels is not None else None
         
-        # Compute adjacency matrix based on the phenotypic similarities
-        if phenotypes is not None:
-            adj = self.sim(phenotypes.unsqueeze(1), phenotypes.unsqueeze(0))
-            # normalize the adj matrix
-            adj = F.softmax(adj, dim=1)
-        else:
-            adj = None
+        # chunk the features for each task
+        _, _, C = features.shape
+        assert C % self.num_phenotype == 0, "Number of features must be divisible by the number of phenotypes"
+        features = features.chunk(self.num_phenotype, dim=-1) # Tuple of (B, n_views, C/K)
         
-        loss = self.contrastive_loss(features, labels, adj)
+        loss = self.contrastive_loss(features[0], labels)
+        if phenotypes is not None:
+            for i in range(1, self.num_phenotype):
+                sub_phe = phenotypes[:, i - 1].view(-1)
+                valid_idx = sub_phe != -1
+                loss += self.contrastive_loss(features[i][valid_idx], sub_phe[valid_idx])
+
         return loss

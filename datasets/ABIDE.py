@@ -115,8 +115,26 @@ class AbideFmriDataset(Dataset):
         return data, label
 
 
+class String2Index:
+    def __init__(self):
+        self.mapping = {}
+        self.reverse_mapping = {}
+    
+    def fit(self, data):
+        unique_data = np.unique(data)
+        for i, d in enumerate(unique_data):
+            self.mapping[d] = i
+            self.reverse_mapping[i] = d
+    
+    def transform(self, data):
+        return np.array([self.mapping[d] for d in data])
+    
+    def reverse_transform(self, data):
+        return np.array([self.reverse_mapping[d] for d in data])
+
+
 class AbideROIDataset(Dataset):
-    def __init__(self, csv, data_root, n_views, atlas='cc400', task='DX', transforms=None):
+    def __init__(self, csv, data_root, n_views, atlas='cc400', task='DX', transforms=None, cp="", cnp=""):
         self.csv = csv
         # keep consistent with the nan filling strategy
         csv = csv.fillna(-9999)
@@ -131,27 +149,41 @@ class AbideROIDataset(Dataset):
 
         # self.num_fea_names = ['AGE_AT_SCAN', 'HANDEDNESS_SCORES', 'BMI']
         # self.str_fea_names = ['SITE_ID', 'SEX', 'HANDEDNESS_CATEGORY', 'CURRENT_MED_STATUS']
-        self.num_fea_names = ['AGE_AT_SCAN', 'BMI']
-        self.str_fea_names = ['SITE_ID', 'SEX']
-
-        self.num_fea = csv[self.num_fea_names].values
-        self.str_fea = csv[self.str_fea_names].values
+        self.category_phenotype_names = cp.split(', ')
+        self.continuous_phenotype_names = cnp.split(', ')
+        
+        self.cp_fea = csv[self.category_phenotype_names].values
+        self.cnp_fea = csv[self.continuous_phenotype_names].values
 
         # TODO: deal with the missing values
-        self.num_fea[self.num_fea == -9999] = 0
-        self.num_fea[self.num_fea == '-9999'] = 0
-        self.str_fea[self.str_fea == -9999] = 'unk'
-        self.str_fea[self.str_fea == '-9999'] = 'unk'
+        self.cp_fea[self.cp_fea == -9999] = 'unk'
+        self.cp_fea[self.cp_fea == '-9999'] = 'unk'
         # special case. The real-world data!
-        self.str_fea[self.str_fea == '`'] = 'unk'
+        self.cp_fea[self.cp_fea == '`'] = 'unk'
+        self.cp_fea = self._string2index(self.cp_fea)
 
+        self.cnp_fea[self.cnp_fea == -9999] = 0
+        self.cnp_fea[self.cnp_fea == '-9999'] = 0
         # normalize the numerical features by each column
-        self.num_fea = (self.num_fea - self.num_fea.mean(axis=0)) / self.num_fea.std(axis=0)
+        self.cnp_fea = (self.cnp_fea - self.cnp_fea.mean(axis=0)) / self.cnp_fea.std(axis=0)
 
-        self.onehot = OneHotEncoder()
-        self.str_fea = self.onehot.fit_transform(self.str_fea).toarray()
+        self.num_cp = len(self.category_phenotype_names) + 1 # add label information
+        self.num_cnp = len(self.continuous_phenotype_names)
 
-        self.onehot_expand = [len(self.onehot.categories_[i]) for i in range(len(self.str_fea_names))]
+
+    @staticmethod
+    def _string2index(data):
+        transformed_data = np.empty(data.shape, dtype=int)
+        for col in range(data.shape[1]):
+            unique_values = {value: idx for idx, value in enumerate(set(data[:, col]))}
+            # Map 'unk' to -1
+            unique_values['unk'] = -1
+        
+            for row in range(data.shape[0]):
+                transformed_data[row, col] = unique_values.get(data[row, col], -1)
+    
+        return transformed_data
+
     
     def __len__(self):
         return len(self.labels)
@@ -160,8 +192,8 @@ class AbideROIDataset(Dataset):
     def __getitem__(self, idx):
         label = self.labels[idx]
         file_id = self.filenames[idx]
-        num_fea = self.num_fea[idx]
-        str_fea = self.str_fea[idx]
+        cnp_fea = self.cnp_fea[idx]
+        cp_fea = self.cp_fea[idx]
         file_path = os.path.join(self.data_root, self.filenames[idx] + self.suffix)
         roi = pd.read_csv(file_path, sep='\t').values.T # [T, N] -> [N, T]
         if self.transforms:
@@ -176,14 +208,14 @@ class AbideROIDataset(Dataset):
             # [N, T] -> [T, 1, N]
             roi = torch.from_numpy(roi.T).unsqueeze(1).float()
 
-        return roi, label, num_fea, str_fea
+        return roi, label, cnp_fea, cp_fea
 
     @staticmethod
     def collate_fn(batch):
-        data, label, num_fea, str_fea = list(zip(*batch))
+        data, label, cnp_fea, cp_fea = list(zip(*batch))
         # pad the sequence on T
         data = pad_sequence(data, batch_first=True).float()
         label = torch.from_numpy(np.array(label)).long()
-        num_fea = torch.from_numpy(np.array(num_fea)).float()
-        str_fea = torch.from_numpy(np.array(str_fea)).float()
-        return data, label, num_fea, str_fea
+        cnp_fea = torch.from_numpy(np.array(cnp_fea)).float()
+        cp_fea = torch.from_numpy(np.array(cp_fea)).float()
+        return data, label, cnp_fea, cp_fea

@@ -7,14 +7,15 @@ import pandas as pd
 from datetime import timedelta
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from models import get_classifier, get_encoder, get_aggregator, WholeModel, Transformer
+from models import get_model
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from transformers.optimization import get_cosine_schedule_with_warmup
-from utils import yaml_config_hook, train, iterative_training, direct_training
+from utils import yaml_config_hook, train, iterative_training, direct_training, PCGrad
 from sklearn.model_selection import KFold
 from transformers.optimization import get_cosine_schedule_with_warmup
 from datasets import AbideROIDataset, Transforms
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 
 def main(gpu, args, wandb_logger):
@@ -50,7 +51,11 @@ def main(gpu, args, wandb_logger):
         train_csv = csv_file[csv_file['SUB_ID'].isin(train_patient_idx)]
         test_csv = csv_file[csv_file['SUB_ID'].isin(test_patient_idx)]
 
-        train_dataset = AbideROIDataset(train_csv, args.data_root, n_views=args.n_views, atlas=args.atlas, task=args.task, transforms=transforms.train_transforms)
+        train_dataset = AbideROIDataset(train_csv, args.data_root, n_views=args.n_views, atlas=args.atlas,
+        task=args.task, transforms=transforms.train_transforms, cp=args.cp, cnp=args.cnp)
+
+        args.num_cp = train_dataset.num_cp
+        args.num_cnp = train_dataset.num_cnp
 
         # set sampler for parallel training
         if args.world_size > 1:
@@ -75,7 +80,10 @@ def main(gpu, args, wandb_logger):
         )
 
         if rank == 0:
-            test_dataset = AbideROIDataset(test_csv, args.data_root, n_views=args.n_views, atlas=args.atlas, task=args.task, transforms=transforms.test_transforms)
+            test_dataset = AbideROIDataset(test_csv, args.data_root, n_views=args.n_views,
+            atlas=args.atlas, task=args.task, transforms=transforms.test_transforms,
+            cp=args.cp, cnp=args.cnp)
+            
             test_loader = DataLoader(test_dataset, batch_size=args.batch_size, 
             shuffle=False, num_workers=args.workers, pin_memory=True,
             collate_fn=AbideROIDataset.collate_fn)
@@ -83,8 +91,9 @@ def main(gpu, args, wandb_logger):
             test_loader = None
 
         step_per_epoch = len(train_dataset) // (args.batch_size * args.world_size)
-        model = Transformer(n_regions=args.num_roi, embed_dim=args.embed_dim, n_classes=n_classes, drop_rate=args.dropout).cuda()
+        model = get_model(args).cuda()
         optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        pc_opt = PCGrad(optimizer)
 
         if args.scheduler:
             scheduler = get_cosine_schedule_with_warmup(optimizer, args.warmup_epochs * step_per_epoch, args.epochs * step_per_epoch)
@@ -94,6 +103,8 @@ def main(gpu, args, wandb_logger):
         if args.world_size > 1:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = DDP(model, device_ids=[gpu])
+            model._set_static_graph()
+
 
         dataloaders = (train_loader, test_loader)
 
@@ -118,7 +129,7 @@ if __name__ == '__main__':
     os.environ['MASTER_PORT'] = '12345'
 
     # set number of rois according to the atlas
-    atlas2roi = {'cc400': 392, 'ho': 111}
+    atlas2roi = {'cc400': 392, 'ho': 111, 'cc200': 200}
     args.num_roi = atlas2roi[args.atlas]
 
     # set the csv path
