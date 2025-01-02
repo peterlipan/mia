@@ -21,20 +21,18 @@ class LineaEmbedding(nn.Module):
 class PositionwiseFeedForward(nn.Module):
     ''' A two-feed-forward-layer module '''
 
-    def __init__(self, d_in, d_hid, dropout=0.1):
+    def __init__(self, d_in, d_hid, d_out, dropout=0.1):
         super().__init__()
         self.w_1 = nn.Linear(d_in, d_hid) # position-wise
-        self.w_2 = nn.Linear(d_hid, d_in) # position-wise
-        self.layer_norm = nn.LayerNorm(d_in, eps=1e-6)
+        self.w_2 = nn.Linear(d_hid, d_out) # position-wise
+        self.layer_norm = nn.LayerNorm(d_out, eps=1e-6)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
 
-        residual = x
 
-        x = self.w_2(F.relu(self.w_1(x)))
+        x = self.w_2(F.gelu(self.w_1(x)))
         x = self.dropout(x)
-        x += residual
 
         x = self.layer_norm(x)
 
@@ -42,7 +40,7 @@ class PositionwiseFeedForward(nn.Module):
 
 
 class MultiheadChannelAttention(nn.Module):
-    def __init__(self, d_model, n_head=8, d_x=64, dropout=0.1, bias=True):
+    def __init__(self, d_model, n_head=1, d_x=64, dropout=0.1, bias=True):
         super().__init__()
         self.d_model = d_model
         self.norm = nn.LayerNorm(d_model, eps=1e-6)
@@ -60,7 +58,9 @@ class MultiheadChannelAttention(nn.Module):
         scores = query.transpose(-2, -1).matmul(key) / math.sqrt(dx)
         attention = F.softmax(scores, dim=-1)
         if adj is not None:
-            attention = attention * adj
+            # adj @ attention @ adj.T
+            attention = adj.matmul(attention)
+            attention = attention.matmul(adj.transpose(-1, -2))
         attention = self.dropout(attention)     
         return value.matmul(attention)
 
@@ -92,12 +92,12 @@ class GridEncoderLayer(nn.Module):
     def __init__(self, d_model, d_inner=1024, n_head=8, d_x=64, dropout=0.1):
         super().__init__()
         self.tkn_attn = nn.MultiheadAttention(d_model, n_head, dropout, batch_first=True)
-        self.ch_atten = MultiheadChannelAttention(d_model, n_head, d_x, dropout)
+        self.ch_atten = MultiheadChannelAttention(d_model, 1, d_x, dropout)
         self.cross_atten1 = nn.MultiheadAttention(d_model, n_head, dropout, batch_first=True)
         self.cross_atten2 = nn.MultiheadAttention(d_model, n_head, dropout, batch_first=True)
         
         # Add feedforward network
-        self.ffn = PositionwiseFeedForward(d_model, d_inner, dropout=dropout)
+        self.ffn = PositionwiseFeedForward(d_model * 2, d_inner, d_model, dropout=dropout)
     
     def forward(self, x, adj=None):
         # Channel attention with residual
@@ -106,7 +106,10 @@ class GridEncoderLayer(nn.Module):
         # Token attention with residual
         tkn = self.tkn_attn(x, x, x)[0]
 
-        x = self.cross_atten1(tkn, ch, ch)[0] + self.cross_atten2(ch, tkn, tkn)[0] / 2
+        cs1 = self.cross_atten1(tkn, ch, ch)[0]
+        cs2 = self.cross_atten2(ch, tkn, tkn)[0]
+        # concat the two cross attention
+        x = torch.cat([cs1, cs2], dim=-1)
 
         x = self.ffn(x)
         return x
@@ -155,12 +158,13 @@ class GraphSeq(nn.Module):
         super(GraphSeq, self).__init__()
 
         self.embedding = LineaEmbedding(d_in, d_in)
-        self.positional_encoding = SinusoidalPositionalEncoding(d_in, max_len)
+        self.positional_encoding = nn.Parameter(torch.randn(1, max_len, d_in), requires_grad=True)
+        # self.positional_encoding = SinusoidalPositionalEncoding(d_in, max_len)
 
         self.classifier = nn.Linear(d_in, n_classes)
 
-        self.norm1 = nn.LayerNorm(d_in)
-        self.norm2 = nn.LayerNorm(d_in)
+        self.norm_in = nn.LayerNorm(d_in)
+        self.norm_out = nn.LayerNorm(d_in)
         self.pool = nn.AdaptiveAvgPool1d(1)
 
         self.drop_out = nn.Dropout(dropout)
@@ -173,12 +177,11 @@ class GraphSeq(nn.Module):
 
         self.contrast_head = nn.Sequential(
             nn.Linear(d_in, d_in, bias=False),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(d_in, 64 * self.num_phenotype, bias=False)
         )
         
         self.adj = self._generate_adj_matrix(d_in, brain_graph)
-        self.adj = nn.Parameter(self.adj, requires_grad=True)
 
         self._init_params()
 
@@ -228,8 +231,9 @@ class GraphSeq(nn.Module):
         
         else:
             raise ValueError("Unsupported graph type. Choose from 'random', 'scale-free', 'small-world', or 'fully-connected'.")
-
-        return torch.tensor(adj_matrix, dtype=torch.float32).unsqueeze(0)
+        adj_matrix = torch.tensor(adj_matrix, dtype=torch.float32)
+        adj_matrix = nn.Parameter(adj_matrix, requires_grad=True)
+        return adj_matrix
     
     @staticmethod
     def _prepare_adj(adj, device):
@@ -247,13 +251,12 @@ class GraphSeq(nn.Module):
         adj = self._prepare_adj(self.adj, x.device)
         x = rearrange(x, 'b t v n -> (b v) t n', b=B, v=V)
         x = self.embedding(x) # [B V, T, N]
-        x = self.drop_out(self.positional_encoding(x))
-        x = self.norm1(x)
+        x = x + self.positional_encoding[:, :T]
 
         for enc_layer in self.layers:
             x = enc_layer(x, adj)
 
-        x = self.norm2(self.pool(x.transpose(1, 2)).squeeze(-1)) # [B V, C]
+        x = self.norm_out(self.pool(x.transpose(1, 2)).squeeze(-1)) # [B V, C]
 
         logits = self.classifier(x) # [B V, n_cls]
         con_fea = self.contrast_head(x)

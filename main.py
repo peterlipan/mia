@@ -92,7 +92,15 @@ def main(gpu, args, wandb_logger):
 
         step_per_epoch = len(train_dataset) // (args.batch_size * args.world_size)
         model = get_model(args).cuda()
-        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        if args.optimizer == 'adam':
+            opt = torch.optim.Adam
+        elif args.optimizer == 'adamw':
+            opt = torch.optim.AdamW
+        elif args.optimizer == 'sgd':
+            opt = torch.optim.SGD
+        else:
+            raise ValueError(f"Optimizer {args.optimizer} not supported")
+        optimizer = opt(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         pc_opt = PCGrad(optimizer)
 
         if args.scheduler:

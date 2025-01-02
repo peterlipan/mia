@@ -3,7 +3,7 @@ nodes: 1
 gpus: 4
 nr: 0
 workers: 0
-visible_gpus: "2,3,5,6"
+visible_gpus: "2,3,4,6"
 
 # Paths
 data_root: "/home/r20user17/Documents/ABIDE_pcp/cpac/nofilt_noglobal"
@@ -13,7 +13,7 @@ checkpoints: "./checkpoints"
 # Model Options
 model: "graphseq"
 embed_dim: 256
-n_layers: 3
+n_layers: 1
 
 # Dataset Options
 dataset: "ABIDEI"
@@ -21,20 +21,21 @@ task: "DX"
 atlas: "cc400"
 cnp: "AGE_AT_SCAN, BMI"
 cp: "SITE_ID, SEX, HANDEDNESS_CATEGORY, CURRENT_MED_STATUS, EYE_STATUS_AT_SCAN"
-KFold: 10
-fold: 0
-n_views: 6
+KFold: 5
+fold: 1
+n_views: 16
 
 # Training Options
 seed: 42
-batch_size: 20
-epochs: 500
+batch_size: 26
+epochs: 400
 
 # Optimization options
+optimizer: "sgd"
 lr: 0.05
 dropout: 0.5
-weight_decay: 0.05
+weight_decay: 0.03
 warmup_epochs: 10
 scheduler: True
-lambda_con: 0.0
+lambda_con: 0.05
 sup_alpha: 0.3
