@@ -262,4 +262,4 @@ class GraphSeq(nn.Module):
         con_fea = self.contrast_head(x)
         con_fea = rearrange(con_fea, '(b v) c -> b v c', b=B, v=V)
     
-        return logits, con_fea
+        return logits, con_fea, x

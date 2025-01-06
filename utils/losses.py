@@ -220,3 +220,64 @@ class MultiTaskSupervisedContrast(nn.Module):
                 loss += self.contrastive_loss(features[i][valid_idx], sub_phe[valid_idx])
 
         return loss
+
+
+class MultiTaskSampleRelationLoss(nn.Module):
+    def __init__(self, batch_size, world_size, num_phenotype, mode='all'):
+        super().__init__()
+        self.batch_size = batch_size
+        self.world_size = world_size
+        self.num_phenotype = num_phenotype
+        self.mode = mode
+        self.sim = nn.CosineSimilarity(dim=-1)
+        self.criteria = nn.MSELoss()
+
+    def sample_relation(self, mat):
+        # calculate the cosine similarity between samples
+        # and mask-out the diagonal elements (self-similarity)
+        # sim: (N, N)
+        N = mat.shape[0]
+        mask = torch.eye(N, dtype=torch.bool).to(mat.device)
+        sim = self.sim(mat.unsqueeze(1), mat.unsqueeze(0))
+        sim[mask] = 0
+        return sim
+    
+    def forward(self, features, continuous_phenotypes):
+        # features: (B * V, C)
+        # continuous_phenotypes: (B, K) K: num_phenotype
+        N = self.world_size * self.batch_size
+        V = features.shape[0] // self.batch_size
+
+        assert continuous_phenotypes.shape[1] == self.num_phenotype, "Number of phenotypes must match"
+        K = continuous_phenotypes.shape[1]
+
+        if self.world_size > 1:
+            features = torch.cat(GatherLayer.apply(features), dim=0)
+            cp = torch.cat(GatherLayer.apply(continuous_phenotypes), dim=0)
+        
+        loss = 0
+        # supervision on one view
+        if self.mode == 'one':
+            
+            features = rearrange(features, '(n v) c -> n v c', n=N, v=V)
+            features = features.view(N, V, -1)[:, 0, :] # (N, C)
+
+            for i in range(K):
+                sub_phe = cp[:, i].view(-1, 1)
+                valid_idx = (sub_phe != -1).view(-1)
+                fea_sim = self.sample_relation(features[valid_idx])
+                phe_sim = self.sample_relation(sub_phe[valid_idx])
+                loss += self.criteria(fea_sim, phe_sim)
+
+        # supervision on all views
+        elif self.mode == 'all':
+            features = features.view(N, V, -1).view(N * V, -1) # (N * V, C)
+            cp = cp.unsqueeze(1).repeat_interleave(V, dim=1).view(N * V, K)
+            for i in range(K):                
+                sub_phe = cp[:, i].view(-1, 1)
+                valid_idx = (sub_phe != -1).view(-1)
+                fea_sim = self.sample_relation(features[valid_idx])
+                phe_sim = self.sample_relation(sub_phe[valid_idx])
+                loss += self.criteria(fea_sim, phe_sim)
+
+        return loss / K

@@ -162,10 +162,10 @@ class AbideROIDataset(Dataset):
         self.cp_fea[self.cp_fea == '`'] = 'unk'
         self.cp_fea = self._string2index(self.cp_fea)
 
-        self.cnp_fea[self.cnp_fea == -9999] = 0
-        self.cnp_fea[self.cnp_fea == '-9999'] = 0
+        self.cnp_fea[self.cnp_fea == -9999] = -1
+        self.cnp_fea[self.cnp_fea == '-9999'] = -1
         # normalize the numerical features by each column
-        self.cnp_fea = (self.cnp_fea - self.cnp_fea.mean(axis=0)) / self.cnp_fea.std(axis=0)
+        # self.cnp_fea = (self.cnp_fea - self.cnp_fea.mean(axis=0)) / self.cnp_fea.std(axis=0)
 
         self.num_cp = len(self.category_phenotype_names) + 1 # add label information
         self.num_cnp = len(self.continuous_phenotype_names)

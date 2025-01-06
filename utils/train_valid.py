@@ -13,7 +13,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 from .metrics import compute_avg_metrics
-from .losses import GraphAttentionLoss, MultiTaskSupervisedContrast
+from .losses import GraphAttentionLoss, MultiTaskSupervisedContrast, MultiTaskSampleRelationLoss
 
 
 def train(dataloaders, model, optimizer, scheduler, args, logger):
@@ -255,6 +255,7 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
 
     criteria = nn.CrossEntropyLoss().cuda()
     con_criteria = MultiTaskSupervisedContrast(batch_size=args.batch_size, world_size=args.world_size, num_phenotype=args.num_cp).cuda()
+    cnp_criteria = MultiTaskSampleRelationLoss(batch_size=args.batch_size, world_size=args.world_size, num_phenotype=args.num_cnp).cuda()
 
     model.train()
     
@@ -269,16 +270,18 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
             con_label = label[:, 0].contiguous() # [B, V] -> [B,]
             label = rearrange(label, 'B V -> (B V)').contiguous() # [B, V] -> [B V,]
 
-            logits, con_fea = model(img)
+            logits, con_fea, fea = model(img)
             # phenotypes = torch.cat((cnp_fea, cp_fea), dim=-1).contiguous() # [B, V, K] -> [B, K]
             cls_loss = criteria(logits, label)
             con_loss = args.lambda_con * con_criteria(con_fea, phenotypes=cp_fea, labels=con_label) # TODO: add cnp
-            loss = cls_loss + con_loss    
+            cnp_loss = args.lambda_cnp * cnp_criteria(fea, cnp_fea)
+            loss = cls_loss + con_loss + cnp_loss
 
             if args.rank == 0:
                 train_loss = loss.item()
                 cls_loss_val = cls_loss.item()
                 con_loss_val = con_loss.item()
+                cnp_loss_val = cnp_loss.item()
 
             optimizer.zero_grad()
             loss.backward()
@@ -310,4 +313,5 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
                                     'train': {'loss': train_loss,
                                             'cls_loss': cls_loss_val,
                                             'con_loss': con_loss_val,
+                                            'cnp_loss': cnp_loss_val,
                                               'lr': cur_lr}}, )

@@ -3,7 +3,7 @@ nodes: 1
 gpus: 4
 nr: 0
 workers: 0
-visible_gpus: "2,3,4,6"
+visible_gpus: "2,3,4,5"
 
 # Paths
 data_root: "/home/r20user17/Documents/ABIDE_pcp/cpac/nofilt_noglobal"
@@ -22,8 +22,8 @@ atlas: "cc400"
 cnp: "AGE_AT_SCAN, BMI"
 cp: "SITE_ID, SEX, HANDEDNESS_CATEGORY, CURRENT_MED_STATUS, EYE_STATUS_AT_SCAN"
 KFold: 5
-fold: 1
-n_views: 16
+fold: 3
+n_views: 8
 
 # Training Options
 seed: 42
@@ -34,8 +34,9 @@ epochs: 400
 optimizer: "sgd"
 lr: 0.05
 dropout: 0.5
-weight_decay: 0.03
+weight_decay: 0.01
 warmup_epochs: 10
 scheduler: True
 lambda_con: 0.05
+lambda_cnp: 0.5
 sup_alpha: 0.3
