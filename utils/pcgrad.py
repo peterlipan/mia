@@ -247,35 +247,56 @@ class MultiHeadTestNet(nn.Module):
     def forward(self, x):
         feat = self.norm(self._linear(x))
         return self._head1(feat), self._head2(feat)
+    
 
+def main(rank, world_size, x, y):
+    from datetime import timedelta
+    import torch.distributed as dist
+    from torch.nn.parallel import DistributedDataParallel as DDP
 
-if __name__ == '__main__':
-    # Fully shared network test
-    torch.manual_seed(4)
-    x, y = torch.randn(2, 3), torch.randn(2, 4)
-    net = TestNet()
+    dist.init_process_group("nccl", rank=rank, world_size=world_size, timeout=timedelta(hours=12))
+    torch.cuda.set_device(rank)
+
+    x, y = x[rank].cuda(), y[rank].cuda()
+
+    net = TestNet().cuda()
+    net = torch.nn.SyncBatchNorm.convert_sync_batchnorm(net)
+    net = DDP(net, device_ids=[rank])
+
     y_pred = net(x)
     pc_adam = PCGrad(optim.Adam(net.parameters()))
     pc_adam.zero_grad()
+    
     loss1_fn, loss2_fn = nn.L1Loss(), nn.MSELoss()
     loss1, loss2 = loss1_fn(y_pred, y), loss2_fn(y_pred, y)
 
     pc_adam.pc_backward(main_obj=loss1, aux_objs=[loss2])
     for p in net.parameters():
         print(p.grad)
-
-    print('-' * 80)
-
-    # Separated shared network test
-    torch.manual_seed(4)
-    x, y = torch.randn(2, 3), torch.randn(2, 4)
-    net = MultiHeadTestNet()
-    y_pred_1, y_pred_2 = net(x)
-    pc_adam = PCGrad(optim.Adam(net.parameters()))
-    pc_adam.zero_grad()
-    loss1_fn, loss2_fn = nn.MSELoss(), nn.MSELoss()
-    loss1, loss2 = loss1_fn(y_pred_1, y), loss2_fn(y_pred_2, y)
-
-    pc_adam.pc_backward(main_obj=loss1, aux_objs=[loss2])
+    
+    # Test multi-gpu parameters updating
+    if dist.is_available() and dist.is_initialized():
+        for p in net.parameters():
+            if p.grad is not None:
+                dist.all_reduce(p.grad.data, op=dist.ReduceOp.SUM)  # Sum gradients
+                p.grad.data /= dist.get_world_size() 
+    
+    dist.barrier()
+    if rank == 0:
+        print('-' * 50, 'After all-reduce', '-' * 50)
     for p in net.parameters():
         print(p.grad)
+
+
+if __name__ == '__main__':
+    import os
+    import torch.multiprocessing as mp
+    world_size = 2
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '6666'
+
+    torch.manual_seed(4)
+    x, y = torch.randn(world_size, 2, 3), torch.randn(world_size, 2, 4)
+   
+    mp.spawn(main, args=(world_size,x,y,), nprocs=world_size, join=True)

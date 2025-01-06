@@ -285,13 +285,17 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
 
             optimizer.zero_grad()
             loss.backward()
+
+            # Synchronize gradients across all processes
+            if dist.is_available() and dist.is_initialized():
+                for p in model.parameters():
+                    if p.grad is not None:
+                        dist.all_reduce(p.grad.data, op=dist.ReduceOp.SUM)  # Sum gradients
+                        p.grad.data /= dist.get_world_size() 
+                
             optimizer.step()
             if scheduler is not None:
                 scheduler.step()
-
-            if dist.is_available() and dist.is_initialized():
-                loss = loss.data.clone()
-                dist.all_reduce(loss.div_(dist.get_world_size()))
 
             cur_iter += 1
             if cur_iter % 10 == 1:

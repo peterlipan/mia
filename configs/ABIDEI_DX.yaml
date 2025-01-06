@@ -22,7 +22,7 @@ atlas: "cc400"
 cnp: "AGE_AT_SCAN, BMI"
 cp: "SITE_ID, SEX, HANDEDNESS_CATEGORY, CURRENT_MED_STATUS, EYE_STATUS_AT_SCAN"
 KFold: 5
-fold: 3
+fold: 1
 n_views: 8
 
 # Training Options
