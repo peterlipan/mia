@@ -31,7 +31,7 @@ class PositionwiseFeedForward(nn.Module):
     def forward(self, x):
 
 
-        x = self.w_2(F.gelu(self.w_1(x)))
+        x = self.w_2(F.relu(self.w_1(x)))
         x = self.dropout(x)
 
         x = self.layer_norm(x)
@@ -163,7 +163,7 @@ class GraphSeq(nn.Module):
 
         self.classifier = nn.Linear(d_in, n_classes)
 
-        self.norm_in = nn.LayerNorm(d_in)
+        #  self.norm_in = nn.LayerNorm(d_in)
         self.norm_out = nn.LayerNorm(d_in)
         self.pool = nn.AdaptiveAvgPool1d(1)
 
@@ -177,11 +177,17 @@ class GraphSeq(nn.Module):
 
         self.contrast_head = nn.Sequential(
             nn.Linear(d_in, d_in, bias=False),
-            nn.GELU(),
+            nn.ReLU(),
             nn.Linear(d_in, 64 * self.num_phenotype, bias=False)
         )
+
+        self.relation_head = nn.Sequential(
+            nn.Linear(d_in, d_in, bias=False),
+            nn.ReLU(),
+            nn.Linear(d_in, 64, bias=False)
+        )
         
-        self.adj = self._generate_adj_matrix(d_in, brain_graph)
+        #  self.adj = self._generate_adj_matrix(d_in, brain_graph)
 
         self._init_params()
 
@@ -248,18 +254,20 @@ class GraphSeq(nn.Module):
     def forward(self, x):
         # x: [B, T, V, N]
         B, T, V, N = x.shape
-        adj = self._prepare_adj(self.adj, x.device)
+        #  adj = self._prepare_adj(self.adj, x.device)
         x = rearrange(x, 'b t v n -> (b v) t n', b=B, v=V)
         x = self.embedding(x) # [B V, T, N]
         x = x + self.positional_encoding[:, :T]
 
         for enc_layer in self.layers:
-            x = enc_layer(x, adj)
+            x = enc_layer(x)
 
         x = self.norm_out(self.pool(x.transpose(1, 2)).squeeze(-1)) # [B V, C]
 
         logits = self.classifier(x) # [B V, n_cls]
         con_fea = self.contrast_head(x)
         con_fea = rearrange(con_fea, '(b v) c -> b v c', b=B, v=V)
+
+        relation = self.relation_head(x)
     
-        return logits, con_fea, x
+        return logits, con_fea, relation

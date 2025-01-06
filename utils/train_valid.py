@@ -275,30 +275,32 @@ def direct_training(loaders, model, optimizer, scheduler, args, logger):
             cls_loss = criteria(logits, label)
             con_loss = args.lambda_con * con_criteria(con_fea, phenotypes=cp_fea, labels=con_label) # TODO: add cnp
             cnp_loss = args.lambda_cnp * cnp_criteria(fea, cnp_fea)
-            loss = cls_loss + con_loss + cnp_loss
 
             if args.rank == 0:
-                train_loss = loss.item()
                 cls_loss_val = cls_loss.item()
                 con_loss_val = con_loss.item()
                 cnp_loss_val = cnp_loss.item()
+                train_loss = cls_loss_val + con_loss_val + cnp_loss_val
 
             optimizer.zero_grad()
-            loss.backward()
+            optimizer.pc_backward(main_obj=cls_loss, aux_objs=[con_loss, cnp_loss])
+            # loss.backward()
 
             # Synchronize gradients across all processes
             if dist.is_available() and dist.is_initialized():
-                for p in model.parameters():
+                for name, p in model.named_parameters():
                     if p.grad is not None:
                         dist.all_reduce(p.grad.data, op=dist.ReduceOp.SUM)  # Sum gradients
                         p.grad.data /= dist.get_world_size() 
+                    else:
+                        print(f'None grad: {name}')
                 
             optimizer.step()
             if scheduler is not None:
                 scheduler.step()
 
             cur_iter += 1
-            if cur_iter % 10 == 1:
+            if cur_iter % 10 == 0:
                 if args.rank == 0:
                     cur_lr = optimizer.param_groups[0]['lr']
                     test_acc, test_f1, test_auc, test_ap, test_bac, test_sens, test_spec, test_prec, test_mcc, test_kappa = direct_validate(test_fmri_loader, model)

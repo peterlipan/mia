@@ -146,9 +146,9 @@ class PCGrad:
                 self._temp_scheduler.update(
                     conflict_intensity.item(), 
                     acceptance_prob.item()
-                )
-                
-                if torch.rand(1).item() < acceptance_prob:
+                )                
+                if torch.rand(1).item() > acceptance_prob:
+                    # With acceptance_prob probability, USE the auxiliary gradient, which may be conflicting with the main gradient
                     # With (1 - acceptance_prob) probability,USE the orthogonalized gradient
                     aux_grad = aux_grad - (dot_product / (main_grad.norm()**2 + 1e-8)) * main_grad
 
@@ -165,8 +165,7 @@ class PCGrad:
         idx = 0
         for group in self._optim.param_groups:
             for p in group['params']:
-                if p.grad is not None:  # Avoid overwriting None gradients
-                    p.grad = grads[idx]
+                p.grad = grads[idx]
                 idx += 1
 
     def _pack_grad(self, objectives):
@@ -259,20 +258,22 @@ def main(rank, world_size, x, y):
 
     x, y = x[rank].cuda(), y[rank].cuda()
 
-    net = TestNet().cuda()
+    net = MultiHeadTestNet().cuda()
     net = torch.nn.SyncBatchNorm.convert_sync_batchnorm(net)
     net = DDP(net, device_ids=[rank])
+    net._set_static_graph()
 
-    y_pred = net(x)
+    y_pred1, y_pred2 = net(x)
     pc_adam = PCGrad(optim.Adam(net.parameters()))
-    pc_adam.zero_grad()
+    # pc_adam.zero_grad()
     
-    loss1_fn, loss2_fn = nn.L1Loss(), nn.MSELoss()
-    loss1, loss2 = loss1_fn(y_pred, y), loss2_fn(y_pred, y)
+    loss1_fn, loss2_fn = nn.MSELoss(), nn.L1Loss()
+    loss1 = loss1_fn(y_pred1, y)
+    loss2 = loss2_fn(y_pred2, y)
 
     pc_adam.pc_backward(main_obj=loss1, aux_objs=[loss2])
-    for p in net.parameters():
-        print(p.grad)
+    for name, p in net.named_parameters():
+        print(name, p.grad)
     
     # Test multi-gpu parameters updating
     if dist.is_available() and dist.is_initialized():
@@ -284,8 +285,8 @@ def main(rank, world_size, x, y):
     dist.barrier()
     if rank == 0:
         print('-' * 50, 'After all-reduce', '-' * 50)
-    for p in net.parameters():
-        print(p.grad)
+    for name, p in net.named_parameters():
+        print(name, p.grad)
 
 
 if __name__ == '__main__':

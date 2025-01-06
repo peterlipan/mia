@@ -110,13 +110,11 @@ def main(gpu, args, wandb_logger):
         
         if args.world_size > 1:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-            model = DDP(model, device_ids=[gpu])
-            model._set_static_graph()
-
+            model = DDP(model, device_ids=[gpu], static_graph=False, find_unused_parameters=True)
 
         dataloaders = (train_loader, test_loader)
 
-        direct_training(dataloaders, model, optimizer, scheduler, args, wandb_logger)
+        direct_training(dataloaders, model, pc_opt, scheduler, args, wandb_logger)
 
 
 if __name__ == '__main__':
@@ -128,6 +126,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--debug', action="store_true", help='debug mode(disable wandb)')
     args = parser.parse_args()
+
+    torch.autograd.set_detect_anomaly(True)
 
     args.world_size = args.gpus * args.nodes
 
