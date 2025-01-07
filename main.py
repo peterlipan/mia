@@ -11,7 +11,7 @@ from models import get_model
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from transformers.optimization import get_cosine_schedule_with_warmup
-from utils import yaml_config_hook, train, iterative_training, direct_training, PCGrad
+from utils import yaml_config_hook, train, PCGrad
 from sklearn.model_selection import KFold
 from transformers.optimization import get_cosine_schedule_with_warmup
 from datasets import AbideROIDataset, Transforms
@@ -114,7 +114,7 @@ def main(gpu, args, wandb_logger):
 
         dataloaders = (train_loader, test_loader)
 
-        direct_training(dataloaders, model, pc_opt, scheduler, args, wandb_logger)
+        train(dataloaders, model, pc_opt, scheduler, args, wandb_logger)
 
 
 if __name__ == '__main__':

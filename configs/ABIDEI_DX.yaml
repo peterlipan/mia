@@ -23,17 +23,17 @@ cnp: "AGE_AT_SCAN, BMI"
 cp: "SITE_ID, SEX, HANDEDNESS_CATEGORY, CURRENT_MED_STATUS, EYE_STATUS_AT_SCAN"
 KFold: 5
 fold: 1
-n_views: 12
+n_views: 8
 
 # Training Options
 seed: 42
-batch_size: 32
+batch_size: 25
 epochs: 400
 
 # Optimization options
 optimizer: "adam"
 lr: 0.001
-dropout: 0.0
+dropout: 0.5
 weight_decay: 0.01
 warmup_epochs: 10
 scheduler: True

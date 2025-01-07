@@ -146,9 +146,13 @@ class PCGrad:
                 self._temp_scheduler.update(
                     conflict_intensity.item(), 
                     acceptance_prob.item()
-                )                
-                if torch.rand(1).item() > acceptance_prob:
-                    # With acceptance_prob probability, USE the auxiliary gradient, which may be conflicting with the main gradient
+                )
+                # With acceptance_prob probability, USE the auxiliary gradient, which may be conflicting with the main gradient
+                # Add a Gaussian noise to the main gradient for exploration
+                if torch.rand(1).item() < acceptance_prob:
+                    combined_grad += torch.zeros_like(main_grad).normal_(0, main_grad.std().item() + 1e-8) 
+
+                else:
                     # With (1 - acceptance_prob) probability,USE the orthogonalized gradient
                     aux_grad = aux_grad - (dot_product / (main_grad.norm()**2 + 1e-8)) * main_grad
 

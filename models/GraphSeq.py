@@ -187,7 +187,7 @@ class GraphSeq(nn.Module):
             nn.Linear(d_in, 64, bias=False)
         )
         
-        #  self.adj = self._generate_adj_matrix(d_in, brain_graph)
+        self.adj = self._generate_adj_matrix(d_in, brain_graph)
 
         self._init_params()
 
@@ -254,13 +254,13 @@ class GraphSeq(nn.Module):
     def forward(self, x):
         # x: [B, T, V, N]
         B, T, V, N = x.shape
-        #  adj = self._prepare_adj(self.adj, x.device)
+        adj = self._prepare_adj(self.adj, x.device)
         x = rearrange(x, 'b t v n -> (b v) t n', b=B, v=V)
         x = self.embedding(x) # [B V, T, N]
         x = x + self.positional_encoding[:, :T]
 
         for enc_layer in self.layers:
-            x = enc_layer(x)
+            x = enc_layer(x, adj)
 
         x = self.norm_out(self.pool(x.transpose(1, 2)).squeeze(-1)) # [B V, C]
 
