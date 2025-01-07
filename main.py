@@ -11,7 +11,7 @@ from models import get_model
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from transformers.optimization import get_cosine_schedule_with_warmup
-from utils import yaml_config_hook, train, PCGrad
+from utils import yaml_config_hook, train, PCGrad, test_time_train, validate
 from sklearn.model_selection import KFold
 from transformers.optimization import get_cosine_schedule_with_warmup
 from datasets import AbideROIDataset, Transforms
@@ -114,7 +114,27 @@ def main(gpu, args, wandb_logger):
 
         dataloaders = (train_loader, test_loader)
 
-        train(dataloaders, model, pc_opt, scheduler, args, wandb_logger)
+        model = train(dataloaders, model, pc_opt, scheduler, args, wandb_logger)
+
+        # Test time training
+        ttt_train_dataset = AbideROIDataset(test_csv, args.data_root, n_views=args.n_views, atlas=args.atlas,
+        task=args.task, transforms=transforms.train_transforms, cp=args.cp, cnp=args.cnp)
+        ttt_train_loader = DataLoader(
+            ttt_train_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            drop_last=True,
+            num_workers=args.workers,
+            pin_memory=True,
+            collate_fn=AbideROIDataset.collate_fn,
+        )
+        ttt_opt = torch.optim.Adam(model.parameters(), lr=args.lr_ttt, weight_decay=args.weight_decay)
+
+        model = test_time_train(ttt_train_loader, model, ttt_opt, args)
+        acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa = validate(test_loader, model)
+        print('-'*50, f"Fold {i} Final Performance", '-'*50)
+        print(f"Accuracy: {acc:.4f}, F1: {f1:.4f}, AUC: {auc:.4f}, AP: {ap:.4f}, BAC: {bac:.4f},
+        Sens: {sens:.4f}, Spec: {spec:.4f}, Prec: {prec:.4f}, MCC: {mcc:.4f}, Kappa: {kappa:.4f}")
 
 
 if __name__ == '__main__':

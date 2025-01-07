@@ -50,6 +50,9 @@ def train(loaders, model, optimizer, scheduler, args, logger):
     cur_iter = 0
     
     for epoch in range(args.epochs):
+        # necessary to set the epoch for the sampler to shuffle the data
+        if isinstance(train_fmri_loader.sampler, DistributedSampler):
+            train_fmri_loader.sampler.set_epoch(epoch)
         for img, label, cnp_fea, cp_fea in train_fmri_loader:
             img, label = img.cuda(non_blocking=True), label.cuda(non_blocking=True).long()
             cnp_fea, cp_fea = cnp_fea.cuda(non_blocking=True), cp_fea.cuda(non_blocking=True)
@@ -109,4 +112,34 @@ def train(loaders, model, optimizer, scheduler, args, logger):
                                             'con_loss': con_loss_val,
                                             'cnp_loss': cnp_loss_val,
                                               'lr': cur_lr}}, )
+    return model
 
+
+def test_time_train(dataloader, model, optimizer, args):
+    con_criteria = MultiTaskSupervisedContrast(batch_size=args.batch_size, world_size=args.world_size, num_phenotype=args.num_cp).cuda()
+    cnp_criteria = MultiTaskSampleRelationLoss(batch_size=args.batch_size, world_size=args.world_size, num_phenotype=args.num_cnp).cuda()
+    model.train()
+    for img, _, cnp_fea, cp_fea in dataloader:
+        img = img.cuda(non_blocking=True),
+        cnp_fea, cp_fea = cnp_fea.cuda(non_blocking=True), cp_fea.cuda(non_blocking=True)
+
+        _, con_fea, fea = model(img)
+        # phenotypes = torch.cat((cnp_fea, cp_fea), dim=-1).contiguous() # [B, V, K] -> [B, K]
+        con_loss = args.lambda_con * con_criteria(con_fea, phenotypes=cp_fea, labels=con_label) # TODO: add cnp
+        cnp_loss = args.lambda_cnp * cnp_criteria(fea, cnp_fea)
+        loss = (con_loss + cnp_loss) / img.size(0) # average loss per sample
+
+        loss.backward() # gradient accumulation
+
+    # Synchronize gradients across all processes
+    if dist.is_available() and dist.is_initialized():
+        for name, p in model.named_parameters():
+            if p.grad is not None:
+                dist.all_reduce(p.grad.data, op=dist.ReduceOp.SUM)  # Sum gradients
+                p.grad.data /= dist.get_world_size()
+            else:
+                print(f'None grad: {name}')
+    
+    optimizer.step()
+    
+    return model

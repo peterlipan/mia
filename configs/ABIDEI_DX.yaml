@@ -33,6 +33,7 @@ epochs: 400
 # Optimization options
 optimizer: "adam"
 lr: 0.001
+lr_ttt: 1.0e-6
 dropout: 0.5
 weight_decay: 0.01
 warmup_epochs: 10
