@@ -71,6 +71,7 @@ def train(loaders, model, optimizer, scheduler, args, logger):
                 cls_loss_val = cls_loss.item()
                 con_loss_val = con_loss.item()
                 cnp_loss_val = cnp_loss.item()
+                cur_temp = optimizer.cur_temp
                 train_loss = cls_loss_val + con_loss_val + cnp_loss_val
 
             optimizer.zero_grad()
@@ -91,7 +92,7 @@ def train(loaders, model, optimizer, scheduler, args, logger):
                 scheduler.step()
 
             cur_iter += 1
-            if cur_iter % 10 == 0:
+            if cur_iter % 10 == 1:
                 if args.rank == 0:
                     cur_lr = optimizer.param_groups[0]['lr']
                     test_acc, test_f1, test_auc, test_ap, test_bac, test_sens, test_spec, test_prec, test_mcc, test_kappa = validate(test_fmri_loader, model)
@@ -111,7 +112,8 @@ def train(loaders, model, optimizer, scheduler, args, logger):
                                             'cls_loss': cls_loss_val,
                                             'con_loss': con_loss_val,
                                             'cnp_loss': cnp_loss_val,
-                                              'lr': cur_lr}}, )
+                                            'cur_temp': cur_temp,
+                                            'lr': cur_lr}}, )
     return model
 
 

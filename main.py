@@ -133,8 +133,8 @@ def main(gpu, args, wandb_logger):
         model = test_time_train(ttt_train_loader, model, ttt_opt, args)
         acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa = validate(test_loader, model)
         print('-'*50, f"Fold {i} Final Performance", '-'*50)
-        print(f"Accuracy: {acc:.4f}, F1: {f1:.4f}, AUC: {auc:.4f}, AP: {ap:.4f}, BAC: {bac:.4f},
-        Sens: {sens:.4f}, Spec: {spec:.4f}, Prec: {prec:.4f}, MCC: {mcc:.4f}, Kappa: {kappa:.4f}")
+        print(f"Accuracy: {acc:.4f}, F1: {f1:.4f}, AUC: {auc:.4f}, AP: {ap:.4f}, BAC: {bac:.4f},\n", 
+        f"Sens: {sens:.4f}, Spec: {spec:.4f}, Prec: {prec:.4f}, MCC: {mcc:.4f}, Kappa: {kappa:.4f}")
 
 
 if __name__ == '__main__':

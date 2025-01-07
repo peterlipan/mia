@@ -8,8 +8,9 @@ class DynamicTemperatureScheduler:
     def __init__(self, 
                  initial_temp=1.0, 
                  min_temp=0.01, 
-                 max_temp=10.0,
-                 decay_type='exponential'):
+                 max_temp=1000.0,
+                 decay_type='exponential',
+                 decay_rate=0.999):
         """
         Dynamic temperature scheduler for gradient annealing
         
@@ -23,6 +24,7 @@ class DynamicTemperatureScheduler:
         self.min_temp = min_temp
         self.max_temp = max_temp
         self.decay_type = decay_type
+        self.decay_rate = decay_rate
         
         # Tracking optimization dynamics
         self.conflict_history = []
@@ -41,12 +43,12 @@ class DynamicTemperatureScheduler:
         self.conflict_history.append(conflict_intensity)
         self.acceptance_history.append(acceptance_prob)
 
-        # Dynamic temperature adjustment strategies
         if self.decay_type == 'exponential':
-            decay_factor = np.exp(-conflict_intensity * (1 - acceptance_prob))
-            self.temperature *= decay_factor
+            # exponentially decay temperature only based on the number of iterations
+            self.temperature *= self.decay_rate
         
         elif self.decay_type == 'adaptive':
+            # update temperature based on the mean and variance of the conflict history
             conflict_variance = np.var(self.conflict_history[-10:])
             acceptance_mean = np.mean(self.acceptance_history[-10:])
             
@@ -72,11 +74,15 @@ class DynamicTemperatureScheduler:
 
 
 class PCGrad:
-    def __init__(self, optimizer, temperature=0.07, reduction='mean'):
+    def __init__(self, optimizer, temperature=1000, reduction='mean'):
         self._optim = optimizer
         self.init_temp = temperature
         self._reduction = reduction
         self._temp_scheduler = DynamicTemperatureScheduler(initial_temp=temperature)
+    
+    @property
+    def cur_temp(self):
+        return self._temp_scheduler.get_temperature()
 
     @property
     def param_groups(self):
@@ -133,20 +139,20 @@ class PCGrad:
     def _gradient_annealing(self, main_grad, main_has_grad, aux_grads, aux_has_grads):
         combined_grad = main_grad.clone()
 
+        aux_conflict_mean = 0
+        acceptance_prob_mean = 0
+
         for aux_grad, aux_has_grad in zip(aux_grads, aux_has_grads):
             dot_product = torch.dot(main_grad, aux_grad)
             
             if dot_product != 0:
                 conflict_intensity = -dot_product / (main_grad.norm() * aux_grad.norm() + 1e-8)
-                current_temp = self._temp_scheduler.get_temperature()
+                current_temp = self._temp_scheduler.get_temperature()    
                 
                 acceptance_prob = torch.exp(-conflict_intensity / current_temp)
+                aux_conflict_mean += conflict_intensity.item()
+                acceptance_prob_mean += acceptance_prob.item()
                 
-                # Update temperature scheduler
-                self._temp_scheduler.update(
-                    conflict_intensity.item(), 
-                    acceptance_prob.item()
-                )
                 # With acceptance_prob probability, USE the auxiliary gradient, which may be conflicting with the main gradient
                 # Add a Gaussian noise to the main gradient for exploration
                 if torch.rand(1).item() < acceptance_prob:
@@ -158,6 +164,9 @@ class PCGrad:
 
             # Gradient accumulation
             combined_grad[aux_has_grad.bool()] += aux_grad[aux_has_grad.bool()]
+        
+        # Update temperature scheduler
+        self._temp_scheduler.update(aux_conflict_mean / len(aux_grads), acceptance_prob_mean / len(aux_grads))
 
         return combined_grad
 
