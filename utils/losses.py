@@ -243,3 +243,53 @@ class MultiTaskSampleRelationLoss(nn.Module):
                 loss += self.criteria(fea_sim, phe_sim)
 
         return loss / K
+
+
+class ProbabilityLoss(nn.Module):
+    def __init__(self, batch_size, world_size):
+        super(ProbabilityLoss, self).__init__()
+        self.batch_size = batch_size
+        self.world_size = world_size
+        self.criterion = nn.KLDivLoss(reduction='sum')
+
+    def forward(self, logits_stu, logits_tch):
+        assert logits_stu.size() == logits_tch.size()
+        if self.world_size > 1:
+            logits_stu = torch.cat(GatherLayer.apply(logits_stu), dim=0)
+            logits_tch = torch.cat(GatherLayer.apply(logits_tch), dim=0)
+        softmax1 = torch.log_softmax(logits_stu, dim=-1)
+        softmax2 = nn.Softmax(dim=-1)(logits_tch)
+
+        probability_loss = self.criterion(softmax1, softmax2)
+        return probability_loss
+
+
+class BatchLoss(nn.Module):
+    def __init__(self, batch_size, world_size):
+        super(BatchLoss, self).__init__()
+        self.batch_size = batch_size
+        self.world_size = world_size
+
+    def forward(self, features_stu, features_tch):
+        assert features_stu.size() == features_tch.size()
+        N = self.batch_size * self.world_size
+        # gather data from all the processes
+        if self.world_size > 1:
+            features_stu = torch.cat(GatherLayer.apply(features_stu), dim=0)
+            features_tch = torch.cat(GatherLayer.apply(features_tch), dim=0)
+        # reshape as N*C
+        features_stu = features_stu.view(N, -1)
+        features_tch = features_tch.view(N, -1)
+
+        # form N*N similarity matrix
+        sim_stu = features_stu.mm(features_stu.t())
+        norm_stu = torch.norm(sim_stu, 2, 1).view(-1, 1)
+        sim_stu = sim_stu / norm_stu
+
+        sim_tch = features_tch.mm(features_tch.t())
+        norm_tch = torch.norm(sim_tch, 2, 1).view(-1, 1)
+        sim_tch = sim_tch / norm_tch
+
+        batch_loss = (sim_stu - sim_tch) ** 2 / N
+        batch_loss = batch_loss.sum()
+        return batch_loss

@@ -11,9 +11,8 @@ from models import get_model
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from transformers.optimization import get_cosine_schedule_with_warmup
-from utils import yaml_config_hook, train, PCGrad, test_time_train, validate
+from utils import yaml_config_hook, train, PCGrad, test_time_train, validate, Trainer
 from sklearn.model_selection import KFold
-from transformers.optimization import get_cosine_schedule_with_warmup
 from datasets import AbideROIDataset, Transforms
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
@@ -33,108 +32,112 @@ def main(gpu, args, wandb_logger):
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
+    trainer = Trainer(args, wandb_logger)
+    trainer.run(args)
+
     # load data file
-    csv_file = pd.read_csv(args.csv_path)
+    # csv_file = pd.read_csv(args.csv_path)
 
-    transforms = Transforms()
+    # transforms = Transforms()
 
-    kf = KFold(n_splits=args.KFold, shuffle=True, random_state=args.seed)
-    unique_patient = pd.unique(csv_file['SUB_ID'])
+    # kf = KFold(n_splits=args.KFold, shuffle=True, random_state=args.seed)
+    # unique_patient = pd.unique(csv_file['SUB_ID'])
 
-    # split the dataset based on patients
-    for i, (train_id, test_id) in enumerate(kf.split(unique_patient)):
-        # run only on one fold
-        if args.fold is not None and i != args.fold:
-            continue
-        train_patient_idx = unique_patient[train_id]
-        test_patient_idx = unique_patient[test_id]
-        train_csv = csv_file[csv_file['SUB_ID'].isin(train_patient_idx)]
-        test_csv = csv_file[csv_file['SUB_ID'].isin(test_patient_idx)]
+    # # split the dataset based on patients
+    # for i, (train_id, test_id) in enumerate(kf.split(unique_patient)):
+    #     # run only on one fold
+    #     if args.fold is not None and i != args.fold:
+    #         continue
+    #     train_patient_idx = unique_patient[train_id]
+    #     test_patient_idx = unique_patient[test_id]
+    #     train_csv = csv_file[csv_file['SUB_ID'].isin(train_patient_idx)]
+    #     test_csv = csv_file[csv_file['SUB_ID'].isin(test_patient_idx)]
 
-        train_dataset = AbideROIDataset(train_csv, args.data_root, n_views=args.n_views, atlas=args.atlas,
-        task=args.task, transforms=transforms.train_transforms, cp=args.cp, cnp=args.cnp)
+    #     train_dataset = AbideROIDataset(train_csv, args.data_root, n_views=args.n_views, atlas=args.atlas,
+    #     task=args.task, transforms=transforms.train_transforms, cp=args.cp, cnp=args.cnp)
 
-        args.num_cp = train_dataset.num_cp
-        args.num_cnp = train_dataset.num_cnp
+    #     args.num_cp = train_dataset.num_cp
+    #     args.num_cnp = train_dataset.num_cnp
 
-        # set sampler for parallel training
-        if args.world_size > 1:
-            train_sampler = torch.utils.data.distributed.DistributedSampler(
-                train_dataset, num_replicas=args.world_size, rank=rank, shuffle=True
-            )
-        else:
-            train_sampler = None
+    #     # set sampler for parallel training
+    #     if args.world_size > 1:
+    #         train_sampler = torch.utils.data.distributed.DistributedSampler(
+    #             train_dataset, num_replicas=args.world_size, rank=rank, shuffle=True
+    #         )
+    #     else:
+    #         train_sampler = None
 
-        n_classes = train_dataset.n_classes
-        args.n_classes = n_classes
+    #     n_classes = train_dataset.n_classes
+    #     args.n_classes = n_classes
 
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=args.batch_size,
-            shuffle=(train_sampler is None),
-            drop_last=True,
-            num_workers=args.workers,
-            sampler=train_sampler,
-            pin_memory=True,
-            collate_fn=AbideROIDataset.collate_fn,
-        )
+    #     train_loader = DataLoader(
+    #         train_dataset,
+    #         batch_size=args.batch_size,
+    #         shuffle=(train_sampler is None),
+    #         drop_last=True,
+    #         num_workers=args.workers,
+    #         sampler=train_sampler,
+    #         pin_memory=True,
+    #         collate_fn=AbideROIDataset.collate_fn,
+    #     )
 
-        if rank == 0:
-            test_dataset = AbideROIDataset(test_csv, args.data_root, n_views=args.n_views,
-            atlas=args.atlas, task=args.task, transforms=transforms.test_transforms,
-            cp=args.cp, cnp=args.cnp)
+    #     if rank == 0:
+    #         test_dataset = AbideROIDataset(test_csv, args.data_root, n_views=args.n_views,
+    #         atlas=args.atlas, task=args.task, transforms=transforms.test_transforms,
+    #         cp=args.cp, cnp=args.cnp)
             
-            test_loader = DataLoader(test_dataset, batch_size=args.batch_size, 
-            shuffle=False, num_workers=args.workers, pin_memory=True,
-            collate_fn=AbideROIDataset.collate_fn)
-        else:
-            test_loader = None
+    #         test_loader = DataLoader(test_dataset, batch_size=args.batch_size, 
+    #         shuffle=False, num_workers=args.workers, pin_memory=True,
+    #         collate_fn=AbideROIDataset.collate_fn)
+    #     else:
+    #         test_loader = None
 
-        step_per_epoch = len(train_dataset) // (args.batch_size * args.world_size)
-        model = get_model(args).cuda()
-        if args.optimizer == 'adam':
-            opt = torch.optim.Adam
-        elif args.optimizer == 'adamw':
-            opt = torch.optim.AdamW
-        elif args.optimizer == 'sgd':
-            opt = torch.optim.SGD
-        else:
-            raise ValueError(f"Optimizer {args.optimizer} not supported")
-        optimizer = opt(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-        pc_opt = PCGrad(optimizer)
+    #     step_per_epoch = len(train_dataset) // (args.batch_size * args.world_size)
+    #     model = get_model(args).cuda()
+    #     if args.optimizer == 'adam':
+    #         opt = torch.optim.Adam
+    #     elif args.optimizer == 'adamw':
+    #         opt = torch.optim.AdamW
+    #     elif args.optimizer == 'sgd':
+    #         opt = torch.optim.SGD
+    #     else:
+    #         raise ValueError(f"Optimizer {args.optimizer} not supported")
+    #     optimizer = opt(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    #     pc_opt = PCGrad(optimizer)
 
-        if args.scheduler:
-            scheduler = get_cosine_schedule_with_warmup(optimizer, args.warmup_epochs * step_per_epoch, args.epochs * step_per_epoch)
-        else:
-            scheduler = None
+    #     if args.scheduler:
+    #         scheduler = get_cosine_schedule_with_warmup(optimizer, args.warmup_epochs * step_per_epoch, args.epochs * step_per_epoch)
+    #     else:
+    #         scheduler = None
         
-        if args.world_size > 1:
-            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-            model = DDP(model, device_ids=[gpu], static_graph=False, find_unused_parameters=True)
+    #     if args.world_size > 1:
+    #         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+    #         model = DDP(model, device_ids=[gpu], static_graph=False, find_unused_parameters=True)
 
-        dataloaders = (train_loader, test_loader)
+    #     dataloaders = (train_loader, test_loader)
 
-        model = train(dataloaders, model, pc_opt, scheduler, args, wandb_logger)
+    #     model = train(dataloaders, model, pc_opt, scheduler, args, wandb_logger)
 
-        # Test time training
-        ttt_train_dataset = AbideROIDataset(test_csv, args.data_root, n_views=args.n_views, atlas=args.atlas,
-        task=args.task, transforms=transforms.train_transforms, cp=args.cp, cnp=args.cnp)
-        ttt_train_loader = DataLoader(
-            ttt_train_dataset,
-            batch_size=args.batch_size,
-            shuffle=False,
-            drop_last=True,
-            num_workers=args.workers,
-            pin_memory=True,
-            collate_fn=AbideROIDataset.collate_fn,
-        )
-        ttt_opt = torch.optim.Adam(model.parameters(), lr=args.lr_ttt, weight_decay=args.weight_decay)
+    #     # Test time training
+    #     ttt_train_dataset = AbideROIDataset(test_csv, args.data_root, n_views=args.n_views, atlas=args.atlas,
+    #     task=args.task, transforms=transforms.train_transforms, cp=args.cp, cnp=args.cnp)
+    #     ttt_train_loader = DataLoader(
+    #         ttt_train_dataset,
+    #         batch_size=args.batch_size,
+    #         shuffle=False,
+    #         drop_last=True,
+    #         num_workers=args.workers,
+    #         pin_memory=True,
+    #         collate_fn=AbideROIDataset.collate_fn,
+    #     )
+    #     ttt_opt = torch.optim.Adam(model.parameters(), lr=args.lr_ttt, weight_decay=args.weight_decay)
 
-        model = test_time_train(ttt_train_loader, model, ttt_opt, args)
-        acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa = validate(test_loader, model)
-        print('-'*50, f"Fold {i} Final Performance", '-'*50)
-        print(f"Accuracy: {acc:.4f}, F1: {f1:.4f}, AUC: {auc:.4f}, AP: {ap:.4f}, BAC: {bac:.4f},\n", 
-        f"Sens: {sens:.4f}, Spec: {spec:.4f}, Prec: {prec:.4f}, MCC: {mcc:.4f}, Kappa: {kappa:.4f}")
+    #     model = test_time_train(ttt_train_loader, model, ttt_opt, args)
+    #     if rank == 0:
+    #         acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa = validate(test_loader, model)
+    #         print('-'*50, f"Fold {i} Final Performance", '-'*50)
+    #         print(f"Accuracy: {acc:.4f}, F1: {f1:.4f}, AUC: {auc:.4f}, AP: {ap:.4f}, BAC: {bac:.4f},\n", 
+    #         f"Sens: {sens:.4f}, Spec: {spec:.4f}, Prec: {prec:.4f}, MCC: {mcc:.4f}, Kappa: {kappa:.4f}")
 
 
 if __name__ == '__main__':

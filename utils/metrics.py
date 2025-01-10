@@ -40,4 +40,5 @@ def compute_avg_metrics(ground_truth, activations, avg='micro'):
     mcc = matthews_corrcoef(y_true=ground_truth, y_pred=predictions)
     kappa = cohen_kappa_score(y1=ground_truth, y2=predictions)
 
-    return mean_acc, f1, auc, ap, bac, sens, spec, prec, mcc, kappa
+    return {'Accuracy': mean_acc, 'F1': f1, 'AUC': auc, 'AP': ap, 'BAC': bac, 'Sensitivity': sens,
+            'Specificity': spec, 'Precision': prec, 'MCC': mcc, 'Kappa': kappa}

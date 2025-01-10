@@ -6,6 +6,7 @@ import networkx as nx
 import torch.nn.functional as F
 from einops import rearrange
 from torch_geometric.nn import GCNConv
+from .utils import ModelOutputs
 
 
 class LineaEmbedding(nn.Module):
@@ -154,14 +155,16 @@ class SinusoidalPositionalEncoding(nn.Module):
 
 class GraphSeq(nn.Module):
     def __init__(self, d_in, d_model=256, n_classes=2, max_len=1000, n_layers=6, n_head=8, d_x=64,
-            d_inner=512, dropout=0.1, num_phenotype=10, brain_graph="small-world"):
+            d_inner=512, dropout=0.1, num_phenotype=10, brain_graph="small-world", window_size=7, cls_token=True):
         super(GraphSeq, self).__init__()
 
-        self.embedding = LineaEmbedding(d_in, d_in)
+        # self.embedding = (d_in, d_in, kernel_size=window_size, stride=1, padding='same')
+        self.embedding = LineaEmbedding(d_in, d_in, dropout=dropout)
         self.positional_encoding = nn.Parameter(torch.randn(1, max_len, d_in), requires_grad=True)
         # self.positional_encoding = SinusoidalPositionalEncoding(d_in, max_len)
 
         self.classifier = nn.Linear(d_in, n_classes)
+        self.cls_token = nn.Parameter(torch.randn(1, 1, d_in), requires_grad=True) if cls_token else None
 
         #  self.norm_in = nn.LayerNorm(d_in)
         self.norm_out = nn.LayerNorm(d_in)
@@ -187,19 +190,19 @@ class GraphSeq(nn.Module):
             nn.Linear(d_in, 64, bias=False)
         )
         
-        self.adj = self._generate_adj_matrix(d_in, brain_graph)
+        self.adj = torch.stack([self._generate_adj_matrix(d_in, brain_graph) for _ in range(n_layers)], dim=0)
 
-        self._init_params()
+        self.apply(self._init_weights)
 
     
-    def _init_params(self):
-        for p in self.layers.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
-        
-        for p in self.classifier.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
+    def _init_weights(self, module):
+        if isinstance(module, (nn.Linear, nn.Conv1d)):
+            nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                nn.init.constant_(module.bias, 0)
+        elif isinstance(module, nn.LayerNorm):
+            nn.init.constant_(module.bias, 0)
+            nn.init.constant_(module.weight, 1)  
 
 
     @staticmethod
@@ -256,18 +259,22 @@ class GraphSeq(nn.Module):
         B, T, V, N = x.shape
         adj = self._prepare_adj(self.adj, x.device)
         x = rearrange(x, 'b t v n -> (b v) t n', b=B, v=V)
-        x = self.embedding(x) # [B V, T, N]
+        x = self.embedding(x)
+        if self.cls_token is not None:
+            cls_tokens = self.cls_token.expand(B * V, -1, -1)
+            x = torch.cat((cls_tokens, x), dim=1)
+            T += 1
         x = x + self.positional_encoding[:, :T]
 
-        for enc_layer in self.layers:
-            x = enc_layer(x, adj)
+        for i, enc_layer in enumerate(self.layers):
+            x = enc_layer(x, adj[i])
 
-        x = self.norm_out(self.pool(x.transpose(1, 2)).squeeze(-1)) # [B V, C]
+        features = self.norm_out(x[:, 0])
 
-        logits = self.classifier(x) # [B V, n_cls]
-        con_fea = self.contrast_head(x)
-        con_fea = rearrange(con_fea, '(b v) c -> b v c', b=B, v=V)
+        logits = self.classifier(features) # [B V, n_cls]
+        cp_fea = self.contrast_head(features)
+        cp_fea = rearrange(cp_fea, '(b v) c -> b v c', b=B, v=V)
 
-        relation = self.relation_head(x)
+        cnp_fea = self.relation_head(features)
     
-        return logits, con_fea, relation
+        return ModelOutputs(features=features, logits=logits, cp_features=cp_fea, cnp_features=cnp_fea)

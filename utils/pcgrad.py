@@ -7,8 +7,8 @@ import numpy as np
 class DynamicTemperatureScheduler:
     def __init__(self, 
                  initial_temp=1.0, 
-                 min_temp=0.01, 
-                 max_temp=1000.0,
+                 min_temp=0.2, 
+                 max_temp=10.0,
                  decay_type='exponential',
                  decay_rate=0.999):
         """
@@ -74,7 +74,7 @@ class DynamicTemperatureScheduler:
 
 
 class PCGrad:
-    def __init__(self, optimizer, temperature=1000, reduction='mean'):
+    def __init__(self, optimizer, temperature=10.0, reduction='mean'):
         self._optim = optimizer
         self.init_temp = temperature
         self._reduction = reduction
@@ -153,12 +153,7 @@ class PCGrad:
                 aux_conflict_mean += conflict_intensity.item()
                 acceptance_prob_mean += acceptance_prob.item()
                 
-                # With acceptance_prob probability, USE the auxiliary gradient, which may be conflicting with the main gradient
-                # Add a Gaussian noise to the main gradient for exploration
-                if torch.rand(1).item() < acceptance_prob:
-                    combined_grad += torch.zeros_like(main_grad).normal_(0, main_grad.std().item() + 1e-8) 
-
-                else:
+                if torch.rand(1).item() > acceptance_prob:
                     # With (1 - acceptance_prob) probability,USE the orthogonalized gradient
                     aux_grad = aux_grad - (dot_product / (main_grad.norm()**2 + 1e-8)) * main_grad
 

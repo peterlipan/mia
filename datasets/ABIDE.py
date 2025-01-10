@@ -218,4 +218,86 @@ class AbideROIDataset(Dataset):
         label = torch.from_numpy(np.array(label)).long()
         cnp_fea = torch.from_numpy(np.array(cnp_fea)).float()
         cp_fea = torch.from_numpy(np.array(cp_fea)).float()
-        return data, label, cnp_fea, cp_fea
+        return {'x': data, 'label': label, 'cnp_label': cnp_fea, 'cp_label': cp_fea}
+
+
+class AbideDataset(Dataset):
+    def __init__(self, csv, data_root, atlas='cc400', task='DX', transforms=None, cp="", cnp=""):
+        self.csv = csv
+        # keep consistent with the nan filling strategy
+        csv = csv.fillna(-9999)
+
+        self.filenames = csv['FILE_ID'].values
+        self.labels = csv['DX_GROUP'].values
+        self.suffix = f"_rois_{atlas}.1D"
+        self.data_root = data_root
+        self.transforms = transforms
+        self.n_classes = len(np.unique(self.labels))
+
+        # self.num_fea_names = ['AGE_AT_SCAN', 'HANDEDNESS_SCORES', 'BMI']
+        # self.str_fea_names = ['SITE_ID', 'SEX', 'HANDEDNESS_CATEGORY', 'CURRENT_MED_STATUS']
+        self.category_phenotype_names = cp.split(', ')
+        self.continuous_phenotype_names = cnp.split(', ')
+        
+        self.cp_fea = csv[self.category_phenotype_names].values
+        self.cnp_fea = csv[self.continuous_phenotype_names].values
+
+        # TODO: deal with the missing values
+        self.cp_fea[self.cp_fea == -9999] = 'unk'
+        self.cp_fea[self.cp_fea == '-9999'] = 'unk'
+        # special case. The real-world data!
+        self.cp_fea[self.cp_fea == '`'] = 'unk'
+        self.cp_fea = self._string2index(self.cp_fea)
+
+        self.cnp_fea[self.cnp_fea == -9999] = -1
+        self.cnp_fea[self.cnp_fea == '-9999'] = -1
+        # normalize the numerical features by each column
+        # self.cnp_fea = (self.cnp_fea - self.cnp_fea.mean(axis=0)) / self.cnp_fea.std(axis=0)
+
+        self.num_cp = len(self.category_phenotype_names) + 1 # add label information
+        self.num_cnp = len(self.continuous_phenotype_names)
+
+
+    @staticmethod
+    def _string2index(data):
+        transformed_data = np.empty(data.shape, dtype=int)
+        for col in range(data.shape[1]):
+            unique_values = {value: idx for idx, value in enumerate(set(data[:, col]))}
+            # Map 'unk' to -1
+            unique_values['unk'] = -1
+        
+            for row in range(data.shape[0]):
+                transformed_data[row, col] = unique_values.get(data[row, col], -1)
+    
+        return transformed_data
+
+    
+    def __len__(self):
+        return len(self.labels)
+        
+    
+    def __getitem__(self, idx):
+        label = self.labels[idx]
+        file_id = self.filenames[idx]
+        cnp_fea = self.cnp_fea[idx]
+        cp_fea = self.cp_fea[idx]
+        file_path = os.path.join(self.data_root, self.filenames[idx] + self.suffix)
+        roi = pd.read_csv(file_path, sep='\t').values 
+        if self.transforms:
+            x_stu = torch.from_numpy(self.transforms(roi.T).T)
+        else:
+            x_stu = torch.from_numpy(roi)
+        x_tch = torch.from_numpy(roi)
+
+        return x_stu, x_tch, label, cnp_fea, cp_fea
+
+    @staticmethod
+    def collate_fn(batch):
+        x_stu, x_tch, label, cnp_fea, cp_fea = list(zip(*batch))
+        # pad the sequence on T
+        x_stu = pad_sequence(x_stu, batch_first=True).float()
+        x_tch = pad_sequence(x_tch, batch_first=True).float()
+        label = torch.from_numpy(np.array(label)).long()
+        cnp_fea = torch.from_numpy(np.array(cnp_fea)).float()
+        cp_fea = torch.from_numpy(np.array(cp_fea)).float()
+        return {'x_stu': x_stu, 'x_tch': x_tch, 'label': label, 'cnp_fea': cnp_fea, 'cp_fea': cp_fea}

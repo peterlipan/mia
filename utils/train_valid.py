@@ -66,12 +66,13 @@ def train(loaders, model, optimizer, scheduler, args, logger):
             cls_loss = criteria(logits, label)
             con_loss = args.lambda_con * con_criteria(con_fea, phenotypes=cp_fea, labels=con_label) # TODO: add cnp
             cnp_loss = args.lambda_cnp * cnp_criteria(fea, cnp_fea)
+            loss = cls_loss + con_loss + cnp_loss
 
             if args.rank == 0:
                 cls_loss_val = cls_loss.item()
                 con_loss_val = con_loss.item()
                 cnp_loss_val = cnp_loss.item()
-                cur_temp = optimizer.cur_temp
+                cur_temp = optimizer.cur_temp if hasattr(optimizer, 'cur_temp') else 0
                 train_loss = cls_loss_val + con_loss_val + cnp_loss_val
 
             optimizer.zero_grad()
@@ -122,12 +123,12 @@ def test_time_train(dataloader, model, optimizer, args):
     cnp_criteria = MultiTaskSampleRelationLoss(batch_size=args.batch_size, world_size=args.world_size, num_phenotype=args.num_cnp).cuda()
     model.train()
     for img, _, cnp_fea, cp_fea in dataloader:
-        img = img.cuda(non_blocking=True),
+        img = img.cuda(non_blocking=True)
         cnp_fea, cp_fea = cnp_fea.cuda(non_blocking=True), cp_fea.cuda(non_blocking=True)
 
         _, con_fea, fea = model(img)
         # phenotypes = torch.cat((cnp_fea, cp_fea), dim=-1).contiguous() # [B, V, K] -> [B, K]
-        con_loss = args.lambda_con * con_criteria(con_fea, phenotypes=cp_fea, labels=con_label) # TODO: add cnp
+        con_loss = args.lambda_con * con_criteria(con_fea, phenotypes=cp_fea) # TODO: add cnp
         cnp_loss = args.lambda_cnp * cnp_criteria(fea, cnp_fea)
         loss = (con_loss + cnp_loss) / img.size(0) # average loss per sample
 
