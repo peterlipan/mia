@@ -3,44 +3,44 @@ nodes: 1
 gpus: 4
 nr: 0
 workers: 0
-visible_gpus: "3,4,5,6"
+visible_gpus: "4,5,6,7"
 
 # Paths
-data_root: "/home/r20user17/Documents/ABIDE_pcp/cpac/filt_noglobal"
-csv_root: "./datasets/splits"
+data_root: "/home/r20user17/Documents/ADHD200"
+train_csv: "./datasets/splits/ADHD200_Training.csv"
+test_csv: "./datasets/splits/ADHD200_Testing.csv"
 checkpoints: "./checkpoints"
 
 # Model Options
 model: "graphseq"
 embed_dim: 256
-n_layers: 3
+n_layers: 4
 window_size: 9
 cls_token: True
 pooler: False
 
 # Dataset Options
-dataset: "ABIDEI"
+dataset: "ADHD200"
 task: "DX"
 atlas: "cc400"
-cnp: "AGE_AT_SCAN, BMI"
-cp: "SITE_ID, SEX, HANDEDNESS_CATEGORY, CURRENT_MED_STATUS, EYE_STATUS_AT_SCAN"
-KFold: 5
-fold: 1
-n_views: 8
+cnp: "Age, Performance IQ"
+cp: "Gender, Med Status"
+n_views: 5
 
 # Training Options
 seed: 42
-batch_size: 26
+batch_size: 16
 epochs: 400
 
 # Optimization options
 optimizer: "Adam"
 lr: 1.0e-4
+beta1: 0.9
+beta2: 0.999
 lr_ttt: 1.0e-4
-dropout: 0.3
+dropout: 0.5
 weight_decay: 0.03
 warmup_epochs: 10
-scheduler: True
+scheduler: False
 lambda_cp: 0
 lambda_cnp: 0
-

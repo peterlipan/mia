@@ -301,7 +301,7 @@ if __name__ == '__main__':
     import os
     import torch.multiprocessing as mp
     world_size = 2
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "3,4"
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '6666'
 

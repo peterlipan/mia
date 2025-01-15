@@ -9,7 +9,7 @@ echo "Please specify the derivatives you would like to fetch (e.g., 'rois_ho'):"
 read derivatives_arg
 
 # Fetch the ABIDE I dataset with specified derivatives
-python3 -c "from nilearn import datasets; datasets.fetch_abide_pcp(data_dir='$data_dir', derivatives='$derivatives_arg')"
+python3 -c "from nilearn import datasets; datasets.fetch_abide_pcp(data_dir='$data_dir', derivatives='$derivatives_arg', band_pass_filtering=True)"
 
 # Uncomment the line below to run the registration script if needed
 # python3 register_ABIDE_I.py --data_root $data_dir

@@ -118,7 +118,7 @@ class RandomRegionDropout(BasicAugmentation):
 
 
 class RandomTimeMasking(BasicAugmentation):
-    def __init__(self, p=0.5, max_mask_prop=0.2):
+    def __init__(self, p=0.5, max_mask_prop=0.1):
         super().__init__(p)
         self.max_mask_prop = max_mask_prop
 
@@ -370,7 +370,8 @@ class Transforms:
     def __init__(self):
         self.train_transforms = Compose([
             OneOf([
-                RandomGaussianNoise(),
+                RandomGaussianNoise(mean=0, std=0.1),
+                RandomGaussianNoise(mean=0.01, std=0.05),
                 RandomLaplaceNoise(),
                 PhysiologicalNoise(),
             ], p=0.5),
@@ -393,12 +394,6 @@ class Transforms:
                 RandomFrequencyDropout(),
                 RandomFrequencyShift(),
                 RandomHRFModulation(),
-            ], p=0.5),
-            
-            OneOf([
-                TimeFrequencyMasking(),
-                RandomRegionShuffle(),
-                RandomRegionDropout(),
             ], p=0.5),
 
             OneOf([

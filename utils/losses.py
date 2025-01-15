@@ -293,3 +293,37 @@ class BatchLoss(nn.Module):
         batch_loss = (sim_stu - sim_tch) ** 2 / N
         batch_loss = batch_loss.sum()
         return batch_loss
+
+
+class MultiviewCrossEntropy(nn.Module):
+    def __init__(self, mode='all'):
+        super().__init__()  # Properly initialize the base class
+        self.ce = nn.CrossEntropyLoss()
+        self.mode = mode
+
+    def forward(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            logits: Tensor of shape [B, V, C], where:
+                - B: batch size
+                - V: number of views
+                - C: number of classes
+            labels: Tensor of shape [B], containing the ground-truth labels for each sample in the batch.
+
+        Returns:
+            Loss value as a scalar tensor.
+        """
+        # logits: [B, V, C]
+        # labels: [B]
+        B, V, C = logits.shape
+        if self.mode == 'all':
+            logits = logits.view(B * V, C)  # Reshape logits to merge batch and views
+            labels = labels.unsqueeze(1).repeat(1, V).view(-1)  # Repeat labels for each view and flatten
+        elif self.mode == 'one':
+            logits = logits[:, 0, :]  # Use only the first view's logits
+            # labels remain unchanged
+        else:
+            raise ValueError(f"Invalid mode: {self.mode}")
+
+        return self.ce(logits, labels)
+    

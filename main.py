@@ -160,11 +160,12 @@ if __name__ == '__main__':
     os.environ['MASTER_PORT'] = '12345'
 
     # set number of rois according to the atlas
-    atlas2roi = {'cc400': 392, 'ho': 111, 'cc200': 200}
+    atlas2roi = {'cc400': 392, 'ho': 111, 'cc200': 200} if 'ABIDE' in args.dataset else {'cc400': 351}
     args.num_roi = atlas2roi[args.atlas]
 
     # set the csv path
-    args.csv_path = os.path.join(args.csv_root, f'ABIDEI_roi_{args.atlas}.csv')
+    if 'ABIDE' in args.dataset:
+        args.csv_path = os.path.join(args.csv_root, f'ABIDEI_roi_{args.atlas}.csv')
 
     # check checkpoints path
     if not os.path.exists(args.checkpoints):

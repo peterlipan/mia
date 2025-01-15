@@ -192,33 +192,32 @@ class AbideROIDataset(Dataset):
     def __getitem__(self, idx):
         label = self.labels[idx]
         file_id = self.filenames[idx]
-        cnp_fea = self.cnp_fea[idx]
-        cp_fea = self.cp_fea[idx]
+        cnp_label = self.cnp_fea[idx]
+        cp_label = self.cp_fea[idx]
         file_path = os.path.join(self.data_root, self.filenames[idx] + self.suffix)
         roi = pd.read_csv(file_path, sep='\t').values.T # [T, N] -> [N, T]
         if self.transforms:
-            roi = pad_sequence([torch.from_numpy(self.transforms(roi).T) for _ in range(self.n_views)], batch_first=True) # [V, T, N]
-            roi = rearrange(roi, 'v t n -> t v n') # [V, N, T] -> [T, V, N]
-
-            # make the labels and features consistent with the views
-            label = np.stack([label for _ in range(self.n_views)], axis=0) # [V]
-            
+            temp = [torch.from_numpy(self.transforms(roi).T) for _ in range(self.n_views - 1)]
+            # append the original view
+            temp.append(torch.from_numpy(roi.T))
+            roi = pad_sequence(temp, batch_first=True) # [V, T, N]
+            roi = rearrange(roi, 'v t n -> t v n') # [V, N, T] -> [T, V, N]            
 
         else:
             # [N, T] -> [T, 1, N]
             roi = torch.from_numpy(roi.T).unsqueeze(1).float()
 
-        return roi, label, cnp_fea, cp_fea
+        return roi, label, cnp_label, cp_label
 
     @staticmethod
     def collate_fn(batch):
-        data, label, cnp_fea, cp_fea = list(zip(*batch))
+        data, label, cnp_label, cp_label = list(zip(*batch))
         # pad the sequence on T
         data = pad_sequence(data, batch_first=True).float()
         label = torch.from_numpy(np.array(label)).long()
-        cnp_fea = torch.from_numpy(np.array(cnp_fea)).float()
-        cp_fea = torch.from_numpy(np.array(cp_fea)).float()
-        return {'x': data, 'label': label, 'cnp_label': cnp_fea, 'cp_label': cp_fea}
+        cnp_label = torch.from_numpy(np.array(cnp_label)).float()
+        cp_label = torch.from_numpy(np.array(cp_label)).float()
+        return {'x': data, 'label': label, 'cnp_label': cnp_label, 'cp_label': cp_label}
 
 
 class AbideDataset(Dataset):
