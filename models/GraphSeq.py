@@ -62,20 +62,14 @@ class MultiheadChannelAttention(nn.Module):
         self.w_qkv = nn.Linear(d_model, n_head * d_x * 3, bias=bias)
         self.fc = nn.Linear(n_head * d_x, d_model, bias=bias)
     
-    def ScaledDotProductChannelAttention(self, query, key, value, mask=None):
+    def ScaledDotProductChannelAttention(self, query, key, value):
         dx = query.size()[-1]
         scores = query.transpose(-2, -1).matmul(key) / math.sqrt(dx)
         attention = F.softmax(scores, dim=-1)
-        if mask is not None:
-            attention = attention.masked_fill(mask == 0, float('-inf'))
-        # if adj is not None:
-        #     # adj @ attention @ adj.T
-        #     attention = adj.matmul(attention)
-        #     attention = attention.matmul(adj.transpose(-1, -2))
-        attention = self.dropout(attention)     
+        attention = self.dropout(attention)
         return value.matmul(attention)
 
-    def forward(self, x, attn_mask=None):
+    def forward(self, x):
         
         d_x, n_head = self.d_x, self.n_head
         sz_b, len_q, _ = x.size()
@@ -88,7 +82,7 @@ class MultiheadChannelAttention(nn.Module):
         v = v.view(sz_b, len_q, n_head, d_x)
 
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2) # b x n x lq x dx
-        q = self.ScaledDotProductChannelAttention(q, k, v, attn_mask) # b x n x lq x dx
+        q = self.ScaledDotProductChannelAttention(q, k, v) # b x n x lq x dx
 
         q = q.transpose(1, 2).contiguous().view(sz_b, len_q, -1) # b x lq x (n*dx)
         q= self.dropout(self.fc(q))
@@ -178,10 +172,6 @@ class GridEncoderLayer(nn.Module):
     def __init__(self, d_model, d_inner=1024, n_head=8, d_x=64, dropout=0.1, downsample=None):
         super().__init__()
         self.ch_atten = MultiheadChannelAttention(d_model, n_head, d_x, dropout)
-        
-        if downsample is None: # if the first layer
-            n_head = 8
-            d_x = 64
         self.tkn_attn = MultiheadTokenAttention(d_model, n_head, d_x, dropout)
         self.cross_atten1 = MultiheadTokenAttention(d_model, n_head, d_x, dropout)
         self.cross_atten2 = MultiheadTokenAttention(d_model, n_head, d_x, dropout)
@@ -195,7 +185,7 @@ class GridEncoderLayer(nn.Module):
         self.use_checkpoint = True
         self.batch_norm = nn.BatchNorm1d(d_model)
     
-    def _forward(self, x):
+    def _forward(self, x, mask=None):
         x_trans = x.transpose(1, 2)  # [B, C, L]
         x = self.batch_norm(x_trans).transpose(1, 2)  # [B, L, C]
 
@@ -205,7 +195,7 @@ class GridEncoderLayer(nn.Module):
         ch = self.ch_atten(x)
         
         # Token attention with residual
-        tkn = self.tkn_attn(x)
+        tkn = self.tkn_attn(x, mask)
 
         cs1 = self.cross_atten1(tkn, ch, ch)
         cs2 = self.cross_atten2(ch, tkn, tkn)
@@ -218,10 +208,10 @@ class GridEncoderLayer(nn.Module):
         x = x + self.ffn(x)
         return x
 
-    def forward(self, x):
+    def forward(self, x, adj=None):
         if self.use_checkpoint and self.training:
-            return checkpoint(self._forward, x, use_reentrant=True)
-        return self._forward(x)
+            return checkpoint(self._forward, x, adj, use_reentrant=True)
+        return self._forward(x, adj)
 
 
 class SinusoidalPositionalEncoding(nn.Module):
@@ -285,7 +275,7 @@ class TokenMerging(nn.Module):
 
 class GraphSeq(nn.Module):
     def __init__(self, d_in, d_model=256, n_classes=2, max_len=1000, n_layers=6, n_head=8, d_x=64,
-            d_inner=1024, dropout=0.1, num_phenotype=10, brain_graph="small-world"):
+            d_inner=512, dropout=0.1, num_phenotype=10, brain_graph="small-world"):
         super(GraphSeq, self).__init__()
 
         self.d_model = d_in if d_in % n_head == 0 else d_model
@@ -300,7 +290,6 @@ class GraphSeq(nn.Module):
 
         self.drop_out = nn.Dropout(dropout)
 
-        # layers = [GridEncoderLayer(self.d_model, d_inner, n_head=1, d_x=self.d_model, dropout=dropout)]
         layers = [GridEncoderLayer(self.d_model, d_inner, n_head=n_head, d_x=d_x, dropout=dropout)]
         if n_layers > 1:
             for _ in range(n_layers - 1):
@@ -323,7 +312,7 @@ class GraphSeq(nn.Module):
             nn.Linear(self.d_model, 64, bias=False)
         )
         
-        # self.adj = self._generate_adj_matrix(self.d_model, brain_graph) if brain_graph else None
+        # self.adj = self._generate_adj_matrix(self.d_model, brain_graph)
 
         self._init_params()
 
@@ -401,7 +390,7 @@ class GraphSeq(nn.Module):
         x = self.embedding(x)
         x = self.positional_encoding(x)
 
-        for enc_layer in self.layers:
+        for i, enc_layer in enumerate(self.layers):
             x = enc_layer(x)
 
         features = self.norm_out(self.pool(x.transpose(1, 2)).squeeze(-1))

@@ -3,6 +3,7 @@ import torch.nn as nn
 from .gather import GatherLayer
 import torch.nn.functional as F
 from einops import rearrange
+from torch.autograd import Variable
 
 
 class SoftContrastiveLoss(nn.Module):
@@ -316,4 +317,50 @@ class MultiviewCrossEntropy(nn.Module):
             raise ValueError(f"Invalid mode: {self.mode}")
 
         return self.ce(logits, labels)
-    
+
+class FocalLoss(nn.Module):
+    def __init__(self, gamma=2, alpha=None, size_average=True):
+        super(FocalLoss, self).__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+        self.alpha = torch.Tensor([403./871 ,1-403./871])
+        self.size_average = size_average
+
+    def forward(self, input, target):
+        target = target.view(-1,1)
+
+        logpt = F.log_softmax(input)
+        logpt = logpt.gather(1,target)
+        logpt = logpt.view(-1)
+        pt = Variable(logpt.data.exp())
+
+        if self.alpha is not None:
+            if self.alpha.type()!=input.data.type():
+                self.alpha = self.alpha.type_as(input.data)
+            at = self.alpha.gather(0,target.data.view(-1))
+            logpt = logpt * Variable(at)
+
+        loss = -1 * (1-pt)**self.gamma * logpt
+        if self.size_average: return loss.mean()
+        else: return loss.sum()
+
+class MultiviewFocalLoss(nn.Module):
+    def __init__(self, mode='all', gamma=2.0, alpha=None):
+        super().__init__()
+        self.focal_loss = FocalLoss(gamma=gamma, alpha=alpha)
+        self.mode = mode
+
+    def forward(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        # logits: [B, V, C]
+        # labels: [B]
+        B, V, C = logits.shape
+        if self.mode == 'all':
+            logits = logits.view(B * V, C)  # Reshape logits to merge batch and views
+            labels = labels.unsqueeze(1).repeat(1, V).view(-1)  # Repeat labels for each view and flatten
+        elif self.mode == 'one':
+            logits = logits[:, 0, :]  # Use only the first view's logits
+            # labels remain unchanged
+        else:
+            raise ValueError(f"Invalid mode: {self.mode}")
+
+        return self.focal_loss(logits, labels)

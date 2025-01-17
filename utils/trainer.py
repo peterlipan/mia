@@ -5,7 +5,7 @@ from .metrics import compute_avg_metrics
 import torch.distributed as dist
 from einops import rearrange
 from .pcgrad import PCGrad
-from .losses import MultiTaskSupervisedContrast, MultiTaskSampleRelationLoss, MultiviewCrossEntropy
+from .losses import MultiTaskSupervisedContrast, MultiTaskSampleRelationLoss, MultiviewCrossEntropy, MultiviewFocalLoss
 from torch.utils.data import DataLoader
 from datasets import AbideROIDataset, Transforms, AdhdROIDataset
 from models import get_model
@@ -76,7 +76,7 @@ class Trainer:
         args.n_classes = n_classes
         
         if args.rank == 0:
-            self.test_dataset = AbideROIDataset(test_csv, args.data_root, atlas=args.atlas, task=args.task, n_views=args.n_views,
+            self.test_dataset = AbideROIDataset(test_csv, args.data_root, atlas=args.atlas, task=args.task, n_views=1,
                                             transforms=self.transforms.test_transforms, cp=args.cp, cnp=args.cnp)
             self.test_loader = DataLoader(self.test_dataset, batch_size=args.batch_size, shuffle=False, 
                                           num_workers=args.workers, pin_memory=True, collate_fn=AbideROIDataset.collate_fn)
@@ -164,7 +164,7 @@ class Trainer:
                             print(f'None grad: {name}')
                     grad_norm = grad_norm ** 0.5
                 
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
 
                 self.optimizer.step()
 

@@ -363,6 +363,16 @@ class NonLinearTrend(BasicAugmentation):
             trend += amplitude * np.sin(2*np.pi*freq*t + phase)
             
         return x + trend
+    
+
+class ROIWiseNormalize(BasicAugmentation):
+    def __init__(self, p=1.0):
+        super().__init__(p)
+    
+    def augment(self, x):
+        x_mean = np.mean(x, axis=-1, keepdims=True)
+        x_std = np.std(x, axis=-1, keepdims=True)
+        return (x - x_mean) / (x_std + 1e-8)
 
 
 # Updated Transforms class with new augmentations
@@ -384,16 +394,22 @@ class Transforms:
             
             OneOf([
                 RandomTimeRoll(),
-                # RandomTimeWarp(),
+                RandomTimeWarp(),
                 RandomTimeMasking(),
                 TemporalSmoothing(),
             ], p=0.5),
 
             OneOf([
-                # RandomFrequencyNoise(),
+                TimeFrequencyMasking(),
+                RandomRegionShuffle(),
+                RandomRegionDropout(),
+            ], p=0.5),
+
+            OneOf([
+                RandomFrequencyNoise(),
                 RandomFrequencyDropout(),
                 RandomFrequencyShift(),
-                # RandomHRFModulation(),
+                RandomHRFModulation(),
             ], p=0.5),
 
             OneOf([

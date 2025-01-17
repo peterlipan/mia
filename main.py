@@ -26,8 +26,8 @@ def main(gpu, args, wandb_logger):
     args.device = rank
 
     if args.world_size > 1:
-        dist.init_process_group("nccl", rank=rank, world_size=args.world_size, timeout=timedelta(hours=12))
         torch.cuda.set_device(rank)
+        dist.init_process_group("nccl", rank=rank, world_size=args.world_size, timeout=timedelta(hours=12))
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)

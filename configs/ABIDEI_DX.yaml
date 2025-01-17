@@ -13,6 +13,7 @@ checkpoints: "./checkpoints"
 # Model Options
 model: "graphseq"
 embed_dim: 256
+d_inner: 512
 n_layers: 6
 brain_graph: ""
 
@@ -24,12 +25,12 @@ cnp: "AGE_AT_SCAN, BMI"
 cp: "SEX, HANDEDNESS_CATEGORY, CURRENT_MED_STATUS"
 KFold: 5
 fold: 1
-n_views: 8
+n_views: 12
 
 # Training Options
 seed: 42
 batch_size: 20
-epochs: 80
+epochs: 120
 
 # Optimization options
 optimizer: "Adam"
@@ -39,7 +40,7 @@ beta1: 0.9
 beta2: 0.999
 lr_ttt: 1.0e-4
 dropout: 0.3
-weight_decay: 0.03
+weight_decay: 0.01
 warmup_epochs: 10
 scheduler: True
 lambda_cp: 0
