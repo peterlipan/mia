@@ -58,7 +58,7 @@ def get_model(args):
     elif args.model == 'graphseq':
         from .GraphSeq import GraphSeq
         return GraphSeq(d_in=args.num_roi, d_model=args.embed_dim, n_layers=args.n_layers,
-        n_classes=args.n_classes, dropout=args.dropout, num_phenotype=args.num_cp, window_size=args.window_size)
+        n_classes=args.n_classes, dropout=args.dropout, num_phenotype=args.num_cp, brain_graph=args.brain_graph)
     else:
         raise NotImplementedError(f"Model {args.model} not implemented")
 

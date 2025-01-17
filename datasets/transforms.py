@@ -384,16 +384,16 @@ class Transforms:
             
             OneOf([
                 RandomTimeRoll(),
-                RandomTimeWarp(),
+                # RandomTimeWarp(),
                 RandomTimeMasking(),
                 TemporalSmoothing(),
             ], p=0.5),
 
             OneOf([
-                RandomFrequencyNoise(),
+                # RandomFrequencyNoise(),
                 RandomFrequencyDropout(),
                 RandomFrequencyShift(),
-                RandomHRFModulation(),
+                # RandomHRFModulation(),
             ], p=0.5),
 
             OneOf([

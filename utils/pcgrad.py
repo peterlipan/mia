@@ -7,7 +7,7 @@ import numpy as np
 class DynamicTemperatureScheduler:
     def __init__(self, 
                  initial_temp=1.0, 
-                 min_temp=0.2, 
+                 min_temp=0.01, 
                  max_temp=10.0,
                  decay_type='exponential',
                  decay_rate=0.999):
@@ -74,7 +74,7 @@ class DynamicTemperatureScheduler:
 
 
 class PCGrad:
-    def __init__(self, optimizer, temperature=10.0, reduction='mean'):
+    def __init__(self, optimizer, temperature=0.01, reduction='mean'):
         self._optim = optimizer
         self.init_temp = temperature
         self._reduction = reduction
@@ -153,17 +153,18 @@ class PCGrad:
                 aux_conflict_mean += conflict_intensity.item()
                 acceptance_prob_mean += acceptance_prob.item()
                 
-                if torch.rand(1).item() > acceptance_prob:
-                    # With (1 - acceptance_prob) probability,USE the orthogonalized gradient
-                    aux_grad = aux_grad - (dot_product / (main_grad.norm()**2 + 1e-8)) * main_grad
+
+                aux_grad = aux_grad - (dot_product / (main_grad.norm()**2 + 1e-8)) * main_grad
+                aux_grad = aux_grad / (aux_grad.norm() + 1e-8)
 
             # Gradient accumulation
-            combined_grad[aux_has_grad.bool()] += aux_grad[aux_has_grad.bool()]
+            combined_grad[aux_has_grad.bool()] = (aux_grad[aux_has_grad.bool()] + combined_grad[aux_has_grad.bool()]) / 2
         
         # Update temperature scheduler
         self._temp_scheduler.update(aux_conflict_mean / len(aux_grads), acceptance_prob_mean / len(aux_grads))
 
         return combined_grad
+
 
     def _set_grad(self, grads, shapes):
         '''

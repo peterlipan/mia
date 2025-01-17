@@ -9,7 +9,7 @@ from .losses import MultiTaskSupervisedContrast, MultiTaskSampleRelationLoss, Mu
 from torch.utils.data import DataLoader
 from datasets import AbideROIDataset, Transforms, AdhdROIDataset
 from models import get_model
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, StratifiedKFold
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 from transformers.optimization import get_cosine_schedule_with_warmup
@@ -89,9 +89,10 @@ class Trainer:
         step_per_epoch = len(self.train_dataset) // (args.batch_size * args.world_size)
         self.model = get_model(args).cuda()
 
-        opt = getattr(torch.optim, args.optimizer)(self.model.parameters(), lr=args.lr, betas=(args.beta1, args.beta2),
+        opt = getattr(torch.optim, args.optimizer)(self.model.parameters(), lr=args.lr,
                                                               weight_decay=args.weight_decay)
-        self.optimizer = PCGrad(opt)
+        # self.optimizer = PCGrad(opt)
+        self.optimizer = PCGrad(opt) if args.pcgrad else opt
         
         self.ce = MultiviewCrossEntropy().cuda()
         self.cnp_criterion = MultiTaskSampleRelationLoss(batch_size=args.batch_size, world_size=args.world_size, 
@@ -133,6 +134,7 @@ class Trainer:
     def train(self, args):
         cur_iter = 0
         for epoch in range(args.epochs):
+            self.model.train()
             if isinstance(self.train_loader.sampler, DistributedSampler):
                 self.train_loader.sampler.set_epoch(epoch)
             for data in self.train_loader:
@@ -145,15 +147,24 @@ class Trainer:
                 loss = cls_loss + cp_loss + cnp_loss
 
                 self.optimizer.zero_grad()
-                self.optimizer.pc_backward(main_obj=cls_loss, aux_objs=[cp_loss, cnp_loss])
+                if args.pcgrad:
+                    print('Modifying the Gradients')
+                    self.optimizer.pc_backward(main_obj=cls_loss, aux_objs=[cp_loss, cnp_loss])
+                else:
+                    loss.backward()
 
                 if dist.is_available() and dist.is_initialized():
+                    grad_norm = 0.0
                     for name, p in self.model.named_parameters():
                         if p.grad is not None:
                             dist.all_reduce(p.grad.data, op=dist.ReduceOp.SUM)
                             p.grad.data /= dist.get_world_size()
+                            grad_norm += p.grad.data.norm(2).item() ** 2
                         else:
                             print(f'None grad: {name}')
+                    grad_norm = grad_norm ** 0.5
+                
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
 
                 self.optimizer.step()
 
@@ -164,11 +175,14 @@ class Trainer:
                     if args.rank == 0:
                         cur_lr = self.optimizer.param_groups[0]['lr']
                         metrics = self.validate()
+                        cur_temp = self.optimizer.cur_temp if args.pcgrad else 0
                         print(f'Epoch: {epoch}, Iter: {cur_iter}, LR: {cur_lr}, Acc: {metrics['Accuracy']}')
                         if self.logger is not None:
                             self.logger.log({'test': metrics,
                                              'train': {
+                                                 'grad_norm': grad_norm,
                                                  'lr': cur_lr,
+                                                 'cur_temp': cur_temp,
                                                 'loss': loss.item(),
                                                  'cls_loss': cls_loss.item(), 
                                                  'cp_loss': cp_loss.item(),

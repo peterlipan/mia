@@ -298,21 +298,11 @@ class BatchLoss(nn.Module):
 class MultiviewCrossEntropy(nn.Module):
     def __init__(self, mode='all'):
         super().__init__()  # Properly initialize the base class
-        self.ce = nn.CrossEntropyLoss()
+        self.ce = nn.CrossEntropyLoss(label_smoothing=0.1)
         self.mode = mode
 
     def forward(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            logits: Tensor of shape [B, V, C], where:
-                - B: batch size
-                - V: number of views
-                - C: number of classes
-            labels: Tensor of shape [B], containing the ground-truth labels for each sample in the batch.
 
-        Returns:
-            Loss value as a scalar tensor.
-        """
         # logits: [B, V, C]
         # labels: [B]
         B, V, C = logits.shape
