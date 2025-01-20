@@ -7,14 +7,7 @@ import pandas as pd
 from datetime import timedelta
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from models import get_model
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader
-from transformers.optimization import get_cosine_schedule_with_warmup
-from utils import yaml_config_hook, train, PCGrad, test_time_train, validate, Trainer
-from sklearn.model_selection import KFold
-from datasets import AbideROIDataset, Transforms
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from utils import yaml_config_hook, Trainer
 
 
 def main(gpu, args, wandb_logger):

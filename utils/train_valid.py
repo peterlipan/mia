@@ -13,7 +13,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 from .metrics import compute_avg_metrics
-from .losses import MultiTaskSupervisedContrast, MultiTaskSampleRelationLoss
+from .losses import MultiTaskSampleRelationLoss
 
 
 def validate(dataloader, model):

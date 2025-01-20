@@ -1,9 +1,9 @@
 # distributed training
 nodes: 1
-gpus: 4
+gpus: 1
 nr: 0
 workers: 0
-visible_gpus: "3,4,5,6"
+visible_gpus: "0"
 
 # Paths
 data_root: "/home/r20user17/Documents/ABIDE_pcp/cpac/filt_noglobal"
@@ -14,7 +14,8 @@ checkpoints: "./checkpoints"
 model: "graphseq"
 embed_dim: 256
 d_inner: 512
-n_layers: 6
+n_layers: 5
+d_x: 32
 brain_graph: ""
 
 # Dataset Options
@@ -25,12 +26,12 @@ cnp: "AGE_AT_SCAN, BMI"
 cp: "SEX, HANDEDNESS_CATEGORY, CURRENT_MED_STATUS"
 KFold: 5
 fold: 1
-n_views: 12
+n_views: 14
 
 # Training Options
 seed: 42
 batch_size: 20
-epochs: 120
+epochs: 200
 
 # Optimization options
 optimizer: "Adam"
@@ -39,10 +40,10 @@ lr: 1.0e-4
 beta1: 0.9
 beta2: 0.999
 lr_ttt: 1.0e-4
-dropout: 0.3
+dropout: 0.4
 weight_decay: 0.01
 warmup_epochs: 10
 scheduler: True
-lambda_cp: 0
-lambda_cnp: 0
+lambda_con: 0.05
+temp_con: 0.07
 

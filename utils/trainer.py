@@ -5,7 +5,7 @@ from .metrics import compute_avg_metrics
 import torch.distributed as dist
 from einops import rearrange
 from .pcgrad import PCGrad
-from .losses import MultiTaskSupervisedContrast, MultiTaskSampleRelationLoss, MultiviewCrossEntropy, MultiviewFocalLoss
+from .losses import APheSCL, MultiviewCrossEntropy
 from torch.utils.data import DataLoader
 from datasets import AbideROIDataset, Transforms, AdhdROIDataset
 from models import get_model
@@ -95,10 +95,7 @@ class Trainer:
         self.optimizer = PCGrad(opt) if args.pcgrad else opt
         
         self.ce = MultiviewCrossEntropy().cuda()
-        self.cnp_criterion = MultiTaskSampleRelationLoss(batch_size=args.batch_size, world_size=args.world_size, 
-                                                         num_phenotype=args.num_cnp).cuda()
-        self.cp_criterion = MultiTaskSupervisedContrast(batch_size=args.batch_size, world_size=args.world_size, 
-                                                        num_phenotype=args.num_cp).cuda()
+        self.con = APheSCL(batch_size=args.batch_size, world_size=args.world_size, temperature=args.temp_con).cuda()
 
         if args.scheduler:
             self.scheduler = get_cosine_schedule_with_warmup(opt, args.warmup_epochs * step_per_epoch, 
@@ -142,19 +139,19 @@ class Trainer:
 
                 outputs = self.model(data['x']) 
                 cls_loss = self.ce(outputs.logits, data['label'])
-                cp_loss = args.lambda_cp * self.cp_criterion(outputs.cp_features, phenotypes=data['cp_label'], labels=data['label'])
-                cnp_loss = args.lambda_cnp * self.cnp_criterion(outputs.cnp_features, data['cnp_label'])
-                loss = cls_loss + cp_loss + cnp_loss
+                con_loss = args.lambda_con * self.con(features=outputs.cp_features, labels=data['label'], 
+                                                      cat_phenotypes=data['cp_label'], cont_phenotypes=data['cnp_label'])
+                loss = cls_loss + con_loss
 
                 self.optimizer.zero_grad()
                 if args.pcgrad:
                     print('Modifying the Gradients')
-                    self.optimizer.pc_backward(main_obj=cls_loss, aux_objs=[cp_loss, cnp_loss])
+                    self.optimizer.pc_backward(main_obj=cls_loss, aux_objs=[con_loss])
                 else:
                     loss.backward()
 
+                grad_norm = 0.0
                 if dist.is_available() and dist.is_initialized():
-                    grad_norm = 0.0
                     for name, p in self.model.named_parameters():
                         if p.grad is not None:
                             dist.all_reduce(p.grad.data, op=dist.ReduceOp.SUM)
@@ -185,8 +182,7 @@ class Trainer:
                                                  'cur_temp': cur_temp,
                                                 'loss': loss.item(),
                                                  'cls_loss': cls_loss.item(), 
-                                                 'cp_loss': cp_loss.item(),
-                                                 'cnp_loss': cnp_loss.item(),}})
+                                                 'con_loss': con_loss.item(),}})
                                             
     def kfold_run(self, args):
         self.csv_file = pd.read_csv(args.csv_path)

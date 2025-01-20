@@ -381,7 +381,7 @@ class Transforms:
         self.train_transforms = Compose([
             OneOf([
                 RandomGaussianNoise(mean=0, std=0.1),
-                RandomGaussianNoise(mean=0.01, std=0.05),
+                RandomGaussianNoise(mean=5, std=0.1),
                 RandomLaplaceNoise(),
                 PhysiologicalNoise(),
             ], p=0.5),

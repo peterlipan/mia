@@ -9,7 +9,6 @@ from .utils import ModelOutputs
 from torch.utils.checkpoint import checkpoint
 
 
-
 class LineaEmbedding(nn.Module):
     def __init__(self, n_regions, embed_dim, dropout=0.1):
         super().__init__()
@@ -61,6 +60,7 @@ class MultiheadChannelAttention(nn.Module):
         # Use a single projection matrix for Q, K, V
         self.w_qkv = nn.Linear(d_model, n_head * d_x * 3, bias=bias)
         self.fc = nn.Linear(n_head * d_x, d_model, bias=bias)
+
     
     def ScaledDotProductChannelAttention(self, query, key, value):
         dx = query.size()[-1]
@@ -75,7 +75,7 @@ class MultiheadChannelAttention(nn.Module):
         sz_b, len_q, _ = x.size()
 
         residual = x
-
+        
         q, k, v = self.w_qkv(x).chunk(3, dim=-1)
         q = q.view(sz_b, len_q, n_head, d_x)
         k = k.view(sz_b, len_q, n_head, d_x)
@@ -214,6 +214,28 @@ class GridEncoderLayer(nn.Module):
         return self._forward(x, adj)
 
 
+class TokenMerging(nn.Module):
+    def __init__(self, d_model):
+        super().__init__()
+        self.d_model = d_model
+        self.reduce = nn.Linear(2 * d_model, d_model, bias=False)
+        self.norm = nn.LayerNorm(2 * d_model)
+    
+    def forward(self, x):
+        b, l, _ = x.size()
+
+        if l % 2 != 0:
+            padding = x[:, -1:, :]  # Take the last token
+            x = torch.cat([x, padding], dim=1)  # Pad it to the end
+
+        x0 = x[:, 0::2, :]
+        x1 = x[:, 1::2, :]
+        x = torch.cat([x0, x1], -1)
+        x = self.norm(x)
+        x = self.reduce(x)
+        return x
+
+
 class SinusoidalPositionalEncoding(nn.Module):
     def __init__(self, embed_dim, max_len=1000):
         """
@@ -251,30 +273,8 @@ class SinusoidalPositionalEncoding(nn.Module):
         return x + self.pe[:, :seq_len, :]
 
 
-class TokenMerging(nn.Module):
-    def __init__(self, d_model):
-        super().__init__()
-        self.d_model = d_model
-        self.reduce = nn.Linear(2 * d_model, d_model, bias=False)
-        self.norm = nn.LayerNorm(2 * d_model)
-    
-    def forward(self, x):
-        b, l, _ = x.size()
-
-        if l % 2 != 0:
-            padding = x[:, -1:, :]  # Take the last token
-            x = torch.cat([x, padding], dim=1)  # Pad it to the end
-
-        x0 = x[:, 0::2, :]
-        x1 = x[:, 1::2, :]
-        x = torch.cat([x0, x1], -1)
-        x = self.norm(x)
-        x = self.reduce(x)
-        return x
-
-
 class GraphSeq(nn.Module):
-    def __init__(self, d_in, d_model=256, n_classes=2, max_len=1000, n_layers=6, n_head=8, d_x=64,
+    def __init__(self, d_in, d_model=256, n_classes=2, max_len=1000, n_layers=6, n_head=8, d_x=32,
             d_inner=512, dropout=0.1, num_phenotype=10, brain_graph="small-world"):
         super(GraphSeq, self).__init__()
 
@@ -303,7 +303,7 @@ class GraphSeq(nn.Module):
         self.contrast_head = nn.Sequential(
             nn.Linear(self.d_model, self.d_model, bias=False),
             nn.GELU(),
-            nn.Linear(self.d_model, 64 * self.num_phenotype, bias=False)
+            nn.Linear(self.d_model, 64, bias=False)
         )
 
         self.relation_head = nn.Sequential(
