@@ -301,15 +301,9 @@ class GraphSeq(nn.Module):
         self.num_phenotype = num_phenotype
 
         self.contrast_head = nn.Sequential(
-            nn.Linear(self.d_model, self.d_model, bias=False),
-            nn.GELU(),
-            nn.Linear(self.d_model, 64, bias=False)
-        )
-
-        self.relation_head = nn.Sequential(
-            nn.Linear(self.d_model, self.d_model, bias=False),
-            nn.GELU(),
-            nn.Linear(self.d_model, 64, bias=False)
+            nn.Linear(self.d_model, self.d_model),
+            nn.ReLU(),
+            nn.Linear(self.d_model, 128)
         )
         
         # self.adj = self._generate_adj_matrix(self.d_model, brain_graph)
@@ -399,7 +393,5 @@ class GraphSeq(nn.Module):
         logits = rearrange(logits, '(b v) c -> b v c', b=B, v=V)
         cp_fea = self.contrast_head(features)
         cp_fea = rearrange(cp_fea, '(b v) c -> b v c', b=B, v=V)
-
-        cnp_fea = self.relation_head(features)
     
-        return ModelOutputs(features=features, logits=logits, cp_features=cp_fea, cnp_features=cnp_fea)
+        return ModelOutputs(features=features, logits=logits, cp_features=cp_fea)

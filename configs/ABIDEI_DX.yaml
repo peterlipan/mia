@@ -1,13 +1,15 @@
 # distributed training
 nodes: 1
-gpus: 1
+gpus: 4
 nr: 0
 workers: 0
-visible_gpus: "0"
+visible_gpus: "4,5,6,7"
 
 # Paths
 data_root: "/home/r20user17/Documents/ABIDE_pcp/cpac/filt_noglobal"
-csv_root: "./datasets/splits"
+train_csv: "./datasets/splits/ABIDE_Training.csv"
+test_csv: "./datasets/splits/ABIDE_Testing.csv"
+val_csv: "./datasets/splits/ABIDE_Validation.csv"
 checkpoints: "./checkpoints"
 
 # Model Options
@@ -19,13 +21,11 @@ d_x: 32
 brain_graph: ""
 
 # Dataset Options
-dataset: "ABIDEI"
+dataset: "ABIDE_BNT"
 task: "DX"
 atlas: "cc400"
 cnp: "AGE_AT_SCAN, BMI"
 cp: "SEX, HANDEDNESS_CATEGORY, CURRENT_MED_STATUS"
-KFold: 5
-fold: 1
 n_views: 14
 
 # Training Options
@@ -37,13 +37,13 @@ epochs: 200
 optimizer: "Adam"
 pcgrad: False
 lr: 1.0e-4
-beta1: 0.9
-beta2: 0.999
 lr_ttt: 1.0e-4
 dropout: 0.4
-weight_decay: 0.01
+weight_decay: 0.03
 warmup_epochs: 10
 scheduler: True
 lambda_con: 0.05
 temp_con: 0.07
+temp_gd: 1.0
+temp_decay: 0.999
 

@@ -7,98 +7,123 @@ from torch.autograd import Variable
 
 
 class SupConLoss(nn.Module):
-    def __init__(self, temperature=0.07, base_temperature=0.07, eps=1e-8):
-        super().__init__()
+    """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
+    It also supports the unsupervised contrastive loss in SimCLR"""
+    def __init__(self, temperature=0.07, contrast_mode='all',
+                 base_temperature=0.07):
+        super(SupConLoss, self).__init__()
         self.temperature = temperature
+        self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
-        self.eps = eps
 
-    def forward(self, features, similarity_matrix):
-        device = features.device
-        batch_size = features.shape[0]
-        
-        # Normalize features
+    def forward(self, features, labels=None, scale_factors=None):
+        """Compute loss for model. If both `labels` and `mask` are None,
+        it degenerates to SimCLR unsupervised loss:
+        https://arxiv.org/pdf/2002.05709.pdf
+
+        Args:
+            features: hidden vector of shape [bsz, n_views, ...].
+            labels: ground truth of shape [bsz].
+            mask: contrastive mask of shape [bsz, bsz], mask_{i,j}=1 if sample j
+                has the same class as sample i. Can be asymmetric.
+        Returns:
+            A loss scalar.
+        """
+        device = (torch.device('cuda')
+                  if features.is_cuda
+                  else torch.device('cpu'))
+
+        # normalize the features
         features = F.normalize(features, dim=-1)
-        
+
+        if len(features.shape) < 3:
+            raise ValueError('`features` needs to be [bsz, n_views, ...],'
+                             'at least 3 dimensions are required')
+        if len(features.shape) > 3:
+            features = features.view(features.shape[0], features.shape[1], -1)
+
+        batch_size = features.shape[0]            
+        if labels is not None:
+            labels = labels.contiguous().view(-1, 1)
+            if labels.shape[0] != batch_size:
+                raise ValueError('Num of labels does not match num of features')
+            mask = torch.eq(labels, labels.T).float().to(device)
+        else:
+            mask = torch.eye(batch_size, dtype=torch.float32).to(device)
+
         contrast_count = features.shape[1]
         contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
-        anchor_feature = contrast_feature
-        anchor_count = contrast_count
-        
-        # Tile similarity matrix
-        similarity_matrix = similarity_matrix.repeat(anchor_count, contrast_count)
-        
-        # Compute logits with numerical stability
-        anchor_dot_contrast = torch.matmul(anchor_feature, contrast_feature.T)
-        anchor_dot_contrast = torch.clamp(anchor_dot_contrast, min=-1.0, max=1.0)
-        anchor_dot_contrast = anchor_dot_contrast / self.temperature
-        
-        # For numerical stability
+        if self.contrast_mode == 'one':
+            anchor_feature = features[:, 0]
+            anchor_count = 1
+        elif self.contrast_mode == 'all':
+            anchor_feature = contrast_feature
+            anchor_count = contrast_count
+        else:
+            raise ValueError('Unknown mode: {}'.format(self.contrast_mode))
+
+        # compute logits
+        anchor_dot_contrast = torch.div(
+            torch.matmul(anchor_feature, contrast_feature.T),
+            self.temperature)
+        # for numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
-        
-        # Mask-out self-contrast cases
+        # scale the logits (cosine sim) by the scale factors (cross-modal sim)
+        if scale_factors is not None:
+            scale_factors = scale_factors.repeat(anchor_count, contrast_count)
+            logits = logits * scale_factors
+
+        # tile mask
+        mask = mask.repeat(anchor_count, contrast_count)
+        # mask-out self-contrast cases
         logits_mask = torch.scatter(
-            torch.ones_like(similarity_matrix),
+            torch.ones_like(mask),
             1,
             torch.arange(batch_size * anchor_count).view(-1, 1).to(device),
             0
         )
-        
+        mask = mask * logits_mask
+
+        # compute log_prob
         exp_logits = torch.exp(logits) * logits_mask
-        
-        # Compute log_prob with careful handling of zero denominators
-        pos_mask = similarity_matrix
-        neg_mask = (1 - similarity_matrix) * logits_mask
-        
-        pos_exp_sum = torch.sum(exp_logits * pos_mask, dim=1, keepdim=True)
-        neg_exp_sum = torch.sum(exp_logits * neg_mask, dim=1, keepdim=True)
-        
-        # Add small epsilon to both sums
-        denominator = pos_exp_sum + neg_exp_sum + self.eps
-        
-        log_prob = logits - torch.log(denominator)
-        
-        # Handle positive pairs carefully
-        pos_mask_sum = pos_mask.sum(1)
-        # Add eps to avoid division by zero
-        mean_log_prob_pos = (pos_mask * log_prob).sum(1) / (pos_mask_sum + self.eps)
-        
-        # Loss
-        loss = -(self.temperature / self.base_temperature) * mean_log_prob_pos
+        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
+
+        # compute mean of log-likelihood over positive
+        # modified to handle edge cases when there is no positive pair
+        # for an anchor point. 
+        # Edge case e.g.:- 
+        # features of shape: [4,1,...]
+        # labels:            [0,1,1,2]
+        # loss before mean:  [nan, ..., ..., nan] 
+        mask_pos_pairs = mask.sum(1)
+        mask_pos_pairs = torch.where(mask_pos_pairs < 1e-6, 1, mask_pos_pairs)
+        mean_log_prob_pos = (mask * log_prob).sum(1) / mask_pos_pairs
+
+        # loss
+        loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
         loss = loss.view(anchor_count, batch_size).mean()
-        
+
         return loss
 
 class APheSCL(nn.Module):
-    def __init__(self, world_size, batch_size, temperature=0.07, base_temperature=0.07, eps=1e-8):
+    def __init__(self, world_size, batch_size, temperature=0.07):
         super().__init__()
         self.world_size = world_size
         self.batch_size = batch_size
         self.temperature = temperature
-        self.base_temperature = base_temperature
-        self.eps = eps
-        self.contrastive_loss = SupConLoss(temperature, base_temperature, eps)
+        self.contrastive_loss = SupConLoss(temperature)
 
     def compute_categorical_sim(self, cat_phenotypes):
-        """
-        Compute similarity for categorical phenotypes
-        Args:
-            cat_phenotypes: tensor of shape [batch_size, n_cat_features]
-        Returns:
-            similarity matrix of shape [batch_size, batch_size]
-        """
         device = cat_phenotypes.device
         batch_size, n_features = cat_phenotypes.shape
         
-        # Initialize similarity matrix
-        similarity = torch.ones(batch_size, batch_size, device=device)
+        similarity = torch.zeros(batch_size, batch_size, device=device)
         
         for i in range(n_features):
-            feature = cat_phenotypes[:, i]
-            
-            # Create mask for valid values (assuming -1 is used for missing values)
+            feature = cat_phenotypes[:, i]            
             valid_mask = (feature != -1)
+            confidence = valid_mask.float().sum() / batch_size # confidence based on the ratio of valid values
             
             if valid_mask.sum() <= 1:
                 # Skip this feature if there are not enough valid values
@@ -114,12 +139,12 @@ class APheSCL(nn.Module):
             for idx1, i in enumerate(valid_indices):
                 for idx2, j in enumerate(valid_indices):
                     if feature[i] == feature[j]:
-                        feature_sim[i, j] = 1.0
+                        feature_sim[i, j] = 1.0 * confidence
             
             # Update overall similarity
-            similarity *= (feature_sim + (1 - valid_mask.float().unsqueeze(1) * valid_mask.float().unsqueeze(0)))
+            similarity += feature_sim
         
-        return similarity
+        return similarity / n_features
 
     def compute_continuous_sim(self, cont_phenotypes):
         """
@@ -129,24 +154,20 @@ class APheSCL(nn.Module):
         batch_size, n_features = cont_phenotypes.shape
         
         # Initialize similarity matrix
-        similarity = torch.ones(batch_size, batch_size, device=device)
+        similarity = torch.zeros(batch_size, batch_size, device=device)
         
         for i in range(n_features):
-            feature = cont_phenotypes[:, i]
-            
-            # Create mask for valid values
+            feature = cont_phenotypes[:, i]            
             valid_mask = (feature != -1)
+            confidence = valid_mask.float().sum() / batch_size
             
             if valid_mask.sum() <= 1:
-                # Skip this feature if there are not enough valid values
                 continue
                 
             valid_values = feature[valid_mask]
             
-            # Compute mean and std only on valid values
             mean = valid_values.mean()
-            # Add eps to avoid zero std
-            std = valid_values.std() + 1e-6 if len(valid_values) > 1 else torch.tensor(1.0).to(device)
+            std = valid_values.std() + 1e-6
             
             # Normalize valid values
             normalized = (valid_values - mean) / std
@@ -162,70 +183,45 @@ class APheSCL(nn.Module):
                         dist_matrix[i, j] = dist
             
             # Convert distances to similarities using Gaussian kernel
-            sigma = 1.0  # You can adjust this parameter
-            sim = torch.exp(-dist_matrix / (2 * sigma * sigma))
+            sigma = 1.0
+            sim = torch.exp(-dist_matrix / (2 * sigma * sigma)) * confidence
             
             # Update overall similarity
-            similarity *= sim
+            similarity += sim
         
-        return similarity
+        return similarity / n_features
 
-    def compute_similarity_matrix(self, labels, cat_phenotypes=None, cont_phenotypes=None):
-        device = labels.device
-        batch_size = len(labels)
-        
-        # Create label mask
-        labels = labels.contiguous().view(-1, 1)
-        label_mask = torch.eq(labels, labels.T).float().to(device)
-        
+    def compute_scale_factors(self, cat_phenotypes=None, cont_phenotypes=None):
         if cat_phenotypes is None and cont_phenotypes is None:
-            return label_mask
+            return None
         
-        phenotype_sim = torch.ones((batch_size, batch_size), device=device)
+        device = cat_phenotypes.device if cat_phenotypes is not None else cont_phenotypes.device
+        b = self.batch_size
+
+        phenotype_sim = torch.ones((b, b), device=device) # base scale_factor = 1
         
         if cat_phenotypes is not None:
             cat_sim = self.compute_categorical_sim(cat_phenotypes)
-            phenotype_sim *= cat_sim
+            phenotype_sim += cat_sim
             
         if cont_phenotypes is not None:
             cont_sim = self.compute_continuous_sim(cont_phenotypes)
-            phenotype_sim *= cont_sim
+            phenotype_sim += cont_sim       
         
-        # Ensure similarity values are between 0 and 1
-        phenotype_sim = torch.clamp(phenotype_sim, 0, 1)
-        
-        # Final similarity matrix
-        final_sim = label_mask * phenotype_sim
-        
-        # Ensure each sample has at least one positive pair
-        row_sums = final_sim.sum(dim=1)
-        no_positives = row_sums == 0
-        if no_positives.any():
-            final_sim[no_positives] = label_mask[no_positives]
-        
-        return final_sim
+        return phenotype_sim
 
-    def forward(self, features, labels, cat_phenotypes=None, cont_phenotypes=None):
-        # Input validation
-        assert not torch.isnan(features).any(), "NaN in features"
-        assert not torch.isinf(features).any(), "Inf in features"
+    def forward(self, features, labels=None, cat_phenotypes=None, cont_phenotypes=None):
+
         
         if self.world_size > 1:
             features = torch.cat(GatherLayer.apply(features), dim=0)
-            labels = torch.cat(GatherLayer.apply(labels), dim=0)
-            if cat_phenotypes is not None:
-                cat_phenotypes = torch.cat(GatherLayer.apply(cat_phenotypes), dim=0)
-            if cont_phenotypes is not None:
-                cont_phenotypes = torch.cat(GatherLayer.apply(cont_phenotypes), dim=0)
+            labels = torch.cat(GatherLayer.apply(labels), dim=0) if labels is not None else None
+            cat_phenotypes = torch.cat(GatherLayer.apply(cat_phenotypes), dim=0) if cat_phenotypes is not None else None
+            cont_phenotypes = torch.cat(GatherLayer.apply(cont_phenotypes), dim=0) if cont_phenotypes is not None else None
         
-        similarity_matrix = self.compute_similarity_matrix(labels, cat_phenotypes, cont_phenotypes)
+        scale_factors = self.compute_scale_factors(cat_phenotypes, cont_phenotypes)
         
-        # Validate similarity matrix
-        assert not torch.isnan(similarity_matrix).any(), "NaN in similarity matrix"
-        assert not torch.isinf(similarity_matrix).any(), "Inf in similarity matrix"
-        assert (similarity_matrix >= 0).all() and (similarity_matrix <= 1).all(), "Similarity values out of range"
-        
-        loss = self.contrastive_loss(features, similarity_matrix)
+        loss = self.contrastive_loss(features, labels, scale_factors)
         return loss
 
 

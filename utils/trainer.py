@@ -22,7 +22,7 @@ class Trainer:
         self.logger = logger
         self.args = args
     
-    def init_datasets(self, args):
+    def init_adhd_datasets(self, args):
         train_csv = pd.read_csv(args.train_csv)
         test_csv = pd.read_csv(args.test_csv)
         self.train_dataset = AdhdROIDataset(train_csv, args.data_root, atlas=args.atlas, n_views=args.n_views,
@@ -47,14 +47,17 @@ class Trainer:
         if args.rank == 0:
             self.test_dataset = AdhdROIDataset(test_csv, args.data_root, atlas=args.atlas, n_views=args.n_views,
                                               transforms=self.transforms.test_transforms, cp=args.cp, cnp=args.cnp, task=args.task)
-            self.test_loader = DataLoader(self.test_dataset, batch_size=args.batch_size, shuffle=False,
+            self.test_loader = DataLoader(self.test_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False,
                                          num_workers=args.workers, pin_memory=True, collate_fn=AdhdROIDataset.collate_fn)
+            self.val_loader = None
         else:
             self.test_loader = None
+            self.val_loader = None
     
-    def split_datasets(self, train_pid, test_pid, args):
-        train_csv = self.csv_file[self.csv_file['SUB_ID'].isin(train_pid)]
-        test_csv = self.csv_file[self.csv_file['SUB_ID'].isin(test_pid)]
+    def init_abide_datasets(self, args):
+        train_csv = pd.read_csv(args.train_csv)
+        test_csv = pd.read_csv(args.test_csv)
+        val_csv = pd.read_csv(args.val_csv)
         self.train_dataset = AbideROIDataset(train_csv, args.data_root, atlas=args.atlas, task=args.task, n_views=args.n_views,
                                           transforms=self.transforms.train_transforms, cp=args.cp, cnp=args.cnp)
         if args.world_size > 1:
@@ -78,12 +81,17 @@ class Trainer:
         if args.rank == 0:
             self.test_dataset = AbideROIDataset(test_csv, args.data_root, atlas=args.atlas, task=args.task, n_views=1,
                                             transforms=self.transforms.test_transforms, cp=args.cp, cnp=args.cnp)
-            self.test_loader = DataLoader(self.test_dataset, batch_size=args.batch_size, shuffle=False, 
+            self.test_loader = DataLoader(self.test_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False,
+                                          num_workers=args.workers, pin_memory=True, collate_fn=AbideROIDataset.collate_fn)
+            
+            self.val_dataset = AbideROIDataset(val_csv, args.data_root, atlas=args.atlas, task=args.task, n_views=1,
+                                            transforms=self.transforms.test_transforms, cp=args.cp, cnp=args.cnp)
+            self.val_loader = DataLoader(self.val_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False,
                                           num_workers=args.workers, pin_memory=True, collate_fn=AbideROIDataset.collate_fn)
         else:
             self.test_loader = None
+            self.val_loader = None
     
-
     def init_model(self, args):
         
         step_per_epoch = len(self.train_dataset) // (args.batch_size * args.world_size)
@@ -92,7 +100,7 @@ class Trainer:
         opt = getattr(torch.optim, args.optimizer)(self.model.parameters(), lr=args.lr,
                                                               weight_decay=args.weight_decay)
         # self.optimizer = PCGrad(opt)
-        self.optimizer = PCGrad(opt) if args.pcgrad else opt
+        self.optimizer = PCGrad(opt, temperature=args.temp_gd, decay_rate=args.temp_decay) if args.pcgrad else opt
         
         self.ce = MultiviewCrossEntropy().cuda()
         self.con = APheSCL(batch_size=args.batch_size, world_size=args.world_size, temperature=args.temp_con).cuda()
@@ -107,12 +115,12 @@ class Trainer:
             self.model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(self.model)
             self.model = DDP(self.model, device_ids=[args.rank], static_graph=True)
 
-    def validate(self):
+    def validate(self, loader):
         self.model.eval()
         ground_truth = torch.Tensor().cuda()
         predictions = torch.Tensor().cuda()
         with torch.no_grad():
-            for data in self.test_loader:
+            for data in loader:
                 data = {k: v.cuda(non_blocking=True) for k, v in data.items()}
                 outputs = self.model(data['x'])
                 pred = F.softmax(outputs.logits.squeeze(1), dim=-1) # [B, 1, C] -> [B, C]
@@ -139,14 +147,17 @@ class Trainer:
 
                 outputs = self.model(data['x']) 
                 cls_loss = self.ce(outputs.logits, data['label'])
-                con_loss = args.lambda_con * self.con(features=outputs.cp_features, labels=data['label'], 
+                con_loss = args.lambda_con * self.con(features=outputs.cp_features, labels=data['label'],
                                                       cat_phenotypes=data['cp_label'], cont_phenotypes=data['cnp_label'])
                 loss = cls_loss + con_loss
 
                 self.optimizer.zero_grad()
+                conflict = 0.0
+                accept_prob = 0.0
                 if args.pcgrad:
-                    print('Modifying the Gradients')
                     self.optimizer.pc_backward(main_obj=cls_loss, aux_objs=[con_loss])
+                    conflict = self.optimizer.conflict_intensity
+                    accept_prob = self.optimizer.acceptance_prob
                 else:
                     loss.backward()
 
@@ -161,7 +172,7 @@ class Trainer:
                             print(f'None grad: {name}')
                     grad_norm = grad_norm ** 0.5
                 
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
 
                 self.optimizer.step()
 
@@ -171,47 +182,44 @@ class Trainer:
                 if cur_iter % 10 == 1:
                     if args.rank == 0:
                         cur_lr = self.optimizer.param_groups[0]['lr']
-                        metrics = self.validate()
+                        test_metrics = self.validate(self.test_loader)
+                        val_metrics = self.validate(self.val_loader) if self.val_loader is not None else {'Accuracy': 0.0}
                         cur_temp = self.optimizer.cur_temp if args.pcgrad else 0
-                        print(f'Epoch: {epoch}, Iter: {cur_iter}, LR: {cur_lr}, Acc: {metrics['Accuracy']}')
+                        print(f'Epoch: {epoch}, Iter: {cur_iter}, LR: {cur_lr}, Acc: {test_metrics['Accuracy']}')
                         if self.logger is not None:
-                            self.logger.log({'test': metrics,
+                            self.logger.log({'test': test_metrics, 'val': val_metrics,
                                              'train': {
                                                  'grad_norm': grad_norm,
                                                  'lr': cur_lr,
+                                                'conflict': conflict,
+                                                'accept_prob': accept_prob,
                                                  'cur_temp': cur_temp,
                                                 'loss': loss.item(),
                                                  'cls_loss': cls_loss.item(), 
                                                  'con_loss': con_loss.item(),}})
-                                            
-    def kfold_run(self, args):
-        self.csv_file = pd.read_csv(args.csv_path)
-        kf = KFold(n_splits=args.KFold, shuffle=True, random_state=args.seed)
-        unique_patient = pd.unique(self.csv_file['SUB_ID'])
-        for i, (train_idx, test_idx) in enumerate(kf.split(unique_patient)):
-            if args.fold is not None and i != args.fold:
-                continue
-            train_patient_idx = unique_patient[train_idx]
-            test_patient_idx = unique_patient[test_idx]
-            self.split_datasets(train_patient_idx, test_patient_idx, args)
-            self.init_model(args)
-            self.train(args)
-            if args.rank == 0:
-                metrics = self.validate()
-                print(f'Fold {i}: {metrics}')
-    
-    def direct_run(self, args):
-        self.init_datasets(args)
+
+    def test_time_phenotype_learning(self, args):
+        self.model.train()
+        opt = torch.optim.Adam(self.model.parameters(), lr=args.ttpl, weight_decay=args.weight_decay)
+        for data in self.test_loader:
+            data = {k: v.cuda(non_blocking=True) for k, v in data.items()}
+            outputs = self.model(data['x'])
+            con_loss = self.con(features=outputs.cp_features, labels=None,
+                                cat_phenotypes=data['cp_label'], cont_phenotypes=data['cnp_label'])
+            opt.zero_grad()
+            con_loss.backward()
+            opt.step()
+        performance = self.validate(self.test_loader)
+        print(f'Test time training: {performance}')
+        return performance
+
+    def run(self, args):
+        if 'ABIDE' in args.dataset:
+            self.init_abide_datasets(args)
+        else:
+            self.init_adhd_datasets(args)
         self.init_model(args)
         self.train(args)
         if args.rank == 0:
-            metrics = self.validate()
+            metrics = self.validate(self.test_loader)
             print(f'Final: {metrics}')
-    
-    def run(self, args):
-        if args.dataset == 'ADHD200':
-            self.direct_run(args)
-        elif args.dataset == 'ABIDEI':
-            self.kfold_run(args)
-        else:
-            raise NotImplementedError(f'Dataset {args.dataset} is not implemented yet')

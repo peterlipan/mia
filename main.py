@@ -136,14 +136,13 @@ def main(gpu, args, wandb_logger):
 if __name__ == '__main__':
     # args
     parser = argparse.ArgumentParser()
-    yaml_config = yaml_config_hook("./configs/ABIDEI_DX.yaml")
+    yaml_config = yaml_config_hook("./configs/ADHD.yaml")
     for k, v in yaml_config.items():
         parser.add_argument(f"--{k}", default=v, type=type(v))
 
     parser.add_argument('--debug', action="store_true", help='debug mode(disable wandb)')
     args = parser.parse_args()
 
-    torch.autograd.set_detect_anomaly(True)
 
     args.world_size = args.gpus * args.nodes
 
@@ -155,10 +154,6 @@ if __name__ == '__main__':
     # set number of rois according to the atlas
     atlas2roi = {'cc400': 392, 'ho': 111, 'cc200': 200} if 'ABIDE' in args.dataset else {'cc400': 351}
     args.num_roi = atlas2roi[args.atlas]
-
-    # set the csv path
-    if 'ABIDE' in args.dataset:
-        args.csv_path = os.path.join(args.csv_root, f'ABIDEI_roi_{args.atlas}.csv')
 
     # check checkpoints path
     if not os.path.exists(args.checkpoints):

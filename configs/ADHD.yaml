@@ -13,11 +13,12 @@ checkpoints: "./checkpoints"
 
 # Model Options
 model: "graphseq"
-embed_dim: 256
-n_layers: 4
-window_size: 9
-cls_token: True
-pooler: False
+embed_dim: 352
+d_inner: 512
+n_layers: 1
+d_x: 32
+brain_graph: ""
+
 
 # Dataset Options
 dataset: "ADHD200"
@@ -25,22 +26,23 @@ task: "DX"
 atlas: "cc400"
 cnp: "Age, Performance IQ"
 cp: "Gender, Med Status"
-n_views: 5
+n_views: 8
 
 # Training Options
 seed: 42
-batch_size: 16
-epochs: 400
+batch_size: 20
+epochs: 200
 
 # Optimization options
 optimizer: "Adam"
+pcgrad: False
 lr: 1.0e-4
-beta1: 0.9
-beta2: 0.999
 lr_ttt: 1.0e-4
-dropout: 0.5
-weight_decay: 0.03
+dropout: 0.4
+weight_decay: 0.01
 warmup_epochs: 10
-scheduler: False
-lambda_cp: 0
-lambda_cnp: 0
+scheduler: True
+lambda_con: 0.05
+temp_con: 0.07
+temp_gd: 1.0
+temp_decay: 0.999

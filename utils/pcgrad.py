@@ -30,6 +30,14 @@ class DynamicTemperatureScheduler:
         self.conflict_history = []
         self.acceptance_history = []
         self.iteration_count = 0
+    
+    @property
+    def mean_conflict(self):
+        return np.mean(self.conflict_history[-10:])
+
+    @property
+    def mean_acceptance(self):
+        return np.mean(self.acceptance_history[-10:])
 
     def update(self, conflict_intensity, acceptance_prob):
         """
@@ -74,15 +82,23 @@ class DynamicTemperatureScheduler:
 
 
 class PCGrad:
-    def __init__(self, optimizer, temperature=0.01, reduction='mean'):
+    def __init__(self, optimizer, temperature=1.0, decay_rate=0.999, reduction='mean'):
         self._optim = optimizer
         self.init_temp = temperature
         self._reduction = reduction
-        self._temp_scheduler = DynamicTemperatureScheduler(initial_temp=temperature)
+        self._temp_scheduler = DynamicTemperatureScheduler(initial_temp=temperature, decay_rate=decay_rate)
     
     @property
     def cur_temp(self):
         return self._temp_scheduler.get_temperature()
+    
+    @property
+    def conflict_intensity(self):
+        return self._temp_scheduler.mean_conflict
+    
+    @property
+    def acceptance_prob(self):
+        return self._temp_scheduler.mean_acceptance
 
     @property
     def param_groups(self):
@@ -138,32 +154,38 @@ class PCGrad:
 
     def _gradient_annealing(self, main_grad, main_has_grad, aux_grads, aux_has_grads):
         combined_grad = main_grad.clone()
-
+        
         aux_conflict_mean = 0
         acceptance_prob_mean = 0
 
         for aux_grad, aux_has_grad in zip(aux_grads, aux_has_grads):
             dot_product = torch.dot(main_grad, aux_grad)
+            cos_sim = dot_product / (main_grad.norm() * aux_grad.norm() + 1e-8)
+            cos_sim = torch.clamp(cos_sim, -1.0, 1.0)
+            current_temp = self._temp_scheduler.get_temperature()    
+            acceptance_prob = torch.exp(-cos_sim / current_temp)
+            aux_conflict_mean += cos_sim.item()
+            acceptance_prob_mean += acceptance_prob.item()
             
-            if dot_product != 0:
-                conflict_intensity = -dot_product / (main_grad.norm() * aux_grad.norm() + 1e-8)
-                current_temp = self._temp_scheduler.get_temperature()    
+            if cos_sim >= 0:
+                # scale
+                aux_grad *= acceptance_prob
                 
-                acceptance_prob = torch.exp(-conflict_intensity / current_temp)
-                aux_conflict_mean += conflict_intensity.item()
-                acceptance_prob_mean += acceptance_prob.item()
                 
+            else:
+                               
+                # Apply gradient annealing if conditions are met
+                if torch.rand(1).item() > acceptance_prob:
+                    aux_grad -= (dot_product / (main_grad.norm()**2 + 1e-8)) * main_grad
 
-                aux_grad = aux_grad - (dot_product / (main_grad.norm()**2 + 1e-8)) * main_grad
-                aux_grad = aux_grad / (aux_grad.norm() + 1e-8)
-
-            # Gradient accumulation
-            combined_grad[aux_has_grad.bool()] = (aux_grad[aux_has_grad.bool()] + combined_grad[aux_has_grad.bool()]) / 2
+            # Accumulate gradients
+            combined_grad[aux_has_grad.bool()] += aux_grad[aux_has_grad.bool()]
         
-        # Update temperature scheduler
+        # Update temperature scheduler with average conflict intensity and acceptance probability
         self._temp_scheduler.update(aux_conflict_mean / len(aux_grads), acceptance_prob_mean / len(aux_grads))
 
         return combined_grad
+
 
 
     def _set_grad(self, grads, shapes):
