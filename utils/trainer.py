@@ -223,3 +223,4 @@ class Trainer:
         if args.rank == 0:
             metrics = self.validate(self.test_loader)
             print(f'Final: {metrics}')
+        self.test_time_phenotype_learning(args)

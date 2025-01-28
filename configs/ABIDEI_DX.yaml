@@ -37,6 +37,7 @@ epochs: 200
 optimizer: "Adam"
 pcgrad: False
 lr: 1.0e-4
+ttpl: 1.0e-5
 lr_ttt: 1.0e-4
 dropout: 0.4
 weight_decay: 0.03
