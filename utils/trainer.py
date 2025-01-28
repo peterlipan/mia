@@ -27,12 +27,16 @@ class Trainer:
         test_csv = pd.read_csv(args.test_csv)
         self.train_dataset = AdhdROIDataset(train_csv, args.data_root, atlas=args.atlas, n_views=args.n_views,
                                             transforms=self.transforms.train_transforms, cp=args.cp, cnp=args.cnp, task=args.task)
+        # For test-time phenotype learning
+        self.ttpl_dataset = AdhdROIDataset(test_csv, args.data_root, atlas=args.atlas, n_views=args.n_views,
+                                           transforms=self.transforms.train_transforms, cp=args.cp, cnp=args.cnp, task=args.task)
         if args.world_size > 1:
             train_sampler = torch.utils.data.distributed.DistributedSampler(
                 self.train_dataset, num_replicas=args.world_size, rank=args.rank, shuffle=True
             )
         else:
             train_sampler = None
+
         
         args.num_cp = self.train_dataset.num_cp
         args.num_cnp = self.train_dataset.num_cnp
@@ -40,6 +44,10 @@ class Trainer:
         self.train_loader = DataLoader(self.train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
                                         drop_last=True, num_workers=args.workers, sampler=train_sampler, pin_memory=True,
                                         collate_fn=AdhdROIDataset.collate_fn)
+        self.ttpl_loader = DataLoader(self.ttpl_dataset, batch_size=args.batch_size, shuffle=False,
+                                        drop_last=False, num_workers=args.workers, pin_memory=True,
+                                        collate_fn=AdhdROIDataset.collate_fn)
+        
         n_clasees = self.train_dataset.n_classes
         self.n_classes = n_clasees
         args.n_classes = n_clasees
@@ -201,7 +209,7 @@ class Trainer:
     def test_time_phenotype_learning(self, args):
         self.model.train()
         opt = torch.optim.Adam(self.model.parameters(), lr=args.ttpl, weight_decay=args.weight_decay)
-        for data in self.test_loader:
+        for data in self.ttpl_loader:
             data = {k: v.cuda(non_blocking=True) for k, v in data.items()}
             outputs = self.model(data['x'])
             con_loss = self.con(features=outputs.cp_features, labels=None,

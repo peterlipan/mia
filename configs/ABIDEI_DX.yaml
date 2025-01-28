@@ -47,4 +47,3 @@ lambda_con: 0.05
 temp_con: 0.07
 temp_gd: 1.0
 temp_decay: 0.999
-
