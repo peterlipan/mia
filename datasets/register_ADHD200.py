@@ -53,7 +53,7 @@ class Site:
                     if num_roi < self.target_num_roi:
                         print(f'Warning: {subject} has {num_roi} ROIs instead of {self.target_num_roi}')
                         continue
-                    if seq_len < 100:
+                    if seq_len < 50:
                         print(f'Warning: {subject} only has {seq_len} time points')
                         continue
                     df = df._append(sub_attr, ignore_index=True)

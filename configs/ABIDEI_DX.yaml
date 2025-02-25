@@ -3,7 +3,7 @@ nodes: 1
 gpus: 4
 nr: 0
 workers: 0
-visible_gpus: "4,5,6,7"
+visible_gpus: "0,1,2,3"
 
 # Paths
 data_root: "/home/r20user17/Documents/ABIDE_pcp/cpac/filt_noglobal"
@@ -14,7 +14,7 @@ checkpoints: "./checkpoints"
 
 # Model Options
 model: "graphseq"
-embed_dim: 256
+embed_dim: 392
 d_inner: 512
 n_layers: 5
 d_x: 32
@@ -38,7 +38,7 @@ optimizer: "Adam"
 pcgrad: False
 lr: 1.0e-4
 ttpl: 1.0e-5
-lr_ttt: 1.0e-4
+lr_ttt: 1.0e-7
 dropout: 0.4
 weight_decay: 0.03
 warmup_epochs: 10

@@ -1,3 +1,4 @@
+import os
 import torch
 import pandas as pd
 import torch.nn.functional as F
@@ -68,6 +69,8 @@ class Trainer:
         val_csv = pd.read_csv(args.val_csv)
         self.train_dataset = AbideROIDataset(train_csv, args.data_root, atlas=args.atlas, task=args.task, n_views=args.n_views,
                                           transforms=self.transforms.train_transforms, cp=args.cp, cnp=args.cnp)
+        self.ttpl_dataset = AbideROIDataset(train_csv, args.data_root, atlas=args.atlas, task=args.task, n_views=args.n_views,
+                                          transforms=self.transforms.train_transforms, cp=args.cp, cnp=args.cnp)
         if args.world_size > 1:
             train_sampler = torch.utils.data.distributed.DistributedSampler(
                 self.train_dataset, num_replicas=args.world_size, rank=args.rank, shuffle=True
@@ -80,6 +83,9 @@ class Trainer:
 
         self.train_loader = DataLoader(self.train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
                                        drop_last=True, num_workers=args.workers, sampler=train_sampler, pin_memory=True,
+                                       collate_fn=AbideROIDataset.collate_fn)
+        self.ttpl_loader = DataLoader(self.train_dataset, batch_size=args.batch_size, shuffle=False,
+                                       drop_last=False, num_workers=args.workers, pin_memory=True,
                                        collate_fn=AbideROIDataset.collate_fn)
         
         n_classes = self.train_dataset.n_classes
@@ -205,21 +211,34 @@ class Trainer:
                                                 'loss': loss.item(),
                                                  'cls_loss': cls_loss.item(), 
                                                  'con_loss': con_loss.item(),}})
+        if args.rank == 0:
+            self.save_model(args)
 
     def test_time_phenotype_learning(self, args):
         self.model.train()
         opt = torch.optim.Adam(self.model.parameters(), lr=args.ttpl, weight_decay=args.weight_decay)
+        opt.zero_grad()
         for data in self.ttpl_loader:
             data = {k: v.cuda(non_blocking=True) for k, v in data.items()}
             outputs = self.model(data['x'])
             con_loss = self.con(features=outputs.cp_features, labels=None,
                                 cat_phenotypes=data['cp_label'], cont_phenotypes=data['cnp_label'])
-            opt.zero_grad()
-            con_loss.backward()
-            opt.step()
-        performance = self.validate(self.test_loader)
-        print(f'Test time training: {performance}')
-        return performance
+            
+            con_loss.backward() # gradient accumulation
+
+        if dist.is_available() and dist.is_initialized():
+            for name, p in self.model.named_parameters():
+                if p.grad is not None:
+                    dist.all_reduce(p.grad.data, op=dist.ReduceOp.SUM)
+                    p.grad.data /= dist.get_world_size()  # Average gradients across all GPUs
+                else:
+                    print(f'None grad: {name}')
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
+        opt.step()
+        
+        if args.rank == 0:
+            performance = self.validate(self.test_loader)
+            print(f'Test time training: {performance}')
 
     def run(self, args):
         if 'ABIDE' in args.dataset:
@@ -232,3 +251,19 @@ class Trainer:
             metrics = self.validate(self.test_loader)
             print(f'Final: {metrics}')
         self.test_time_phenotype_learning(args)
+
+    def save_model(self, args):
+        state_dict = self.model.module.state_dict() if isinstance(self.model, DDP) else self.model.state_dict()
+        performance = self.validate(self.test_loader)
+        save_path = os.path.join(args.checkpoints, f"{args.dataset}_{args.atlas}_{args.task}_AUC_{performance['AUC']:.4f}_.pth")
+        torch.save(state_dict, save_path)
+    
+    def load_model(self, args):
+        model_prefix = f"{args.dataset}_{args.atlas}_{args.task}"
+        candidates = [f for f in os.listdir(args.checkpoints) if f.startswith(model_prefix)]
+        if len(candidates) == 0:
+            raise FileNotFoundError(f"No pretrained model for condition {model_prefix}")
+        candidates.sort()
+        model_path = os.path.join(args.checkpoints, candidates[-1])
+        state_dict = torch.load(model_path)
+        self.model.load_state_dict(state_dict)

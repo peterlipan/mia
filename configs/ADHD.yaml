@@ -3,7 +3,7 @@ nodes: 1
 gpus: 4
 nr: 0
 workers: 0
-visible_gpus: "4,5,6,7"
+visible_gpus: "0,1,2,3"
 
 # Paths
 data_root: "/home/r20user17/Documents/ADHD200"
@@ -13,10 +13,10 @@ checkpoints: "./checkpoints"
 
 # Model Options
 model: "graphseq"
-embed_dim: 352
+embed_dim: 256
 d_inner: 512
-n_layers: 1
-d_x: 32
+n_layers: 2
+d_x: 16
 brain_graph: ""
 
 
@@ -26,21 +26,20 @@ task: "DX"
 atlas: "cc400"
 cnp: "Age, Performance IQ"
 cp: "Gender, Med Status"
-n_views: 8
+n_views: 12
 
 # Training Options
 seed: 42
-batch_size: 20
-epochs: 200
+batch_size: 32
+epochs: 100
 
 # Optimization options
 optimizer: "Adam"
 pcgrad: False
-lr: 1.0e-4
-ttpl: 1.0e-5
-lr_ttt: 1.0e-4
-dropout: 0.4
-weight_decay: 0.01
+lr: 2.0e-4
+ttpl: 1.0e-7
+dropout: 0.5
+weight_decay: 0.1
 warmup_epochs: 10
 scheduler: True
 lambda_con: 0.05

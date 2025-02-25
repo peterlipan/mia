@@ -194,11 +194,10 @@ class APheSCL(nn.Module):
     def compute_scale_factors(self, cat_phenotypes=None, cont_phenotypes=None):
         if cat_phenotypes is None and cont_phenotypes is None:
             return None
-        
+        bs = cat_phenotypes.shape[0] if cat_phenotypes is not None else cont_phenotypes.shape[0]
         device = cat_phenotypes.device if cat_phenotypes is not None else cont_phenotypes.device
-        b = self.batch_size
 
-        phenotype_sim = torch.ones((b, b), device=device) # base scale_factor = 1
+        phenotype_sim = torch.ones((bs, bs), device=device) # base scale_factor = 1
         
         if cat_phenotypes is not None:
             cat_sim = self.compute_categorical_sim(cat_phenotypes)

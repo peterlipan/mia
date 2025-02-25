@@ -168,6 +168,19 @@ class MultiheadTokenAttention(nn.Module):
         return q
 
 
+class GatedFusion(nn.Module):
+    def __init__(self, d_model):
+        super().__init__()
+        self.gate = nn.Sequential(
+            nn.Linear(2*d_model, d_model),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, cs1, cs2):
+        gate_values = self.gate(torch.cat([cs1, cs2], dim=-1))
+        return gate_values * cs1 + (1 - gate_values) * cs2
+
+
 class GridEncoderLayer(nn.Module):
     def __init__(self, d_model, d_inner=1024, n_head=8, d_x=64, dropout=0.1, downsample=None):
         super().__init__()
@@ -178,12 +191,12 @@ class GridEncoderLayer(nn.Module):
         
         # Add feedforward network
         self.ffn = PositionwiseFeedForward(d_model, d_inner, d_model, dropout=dropout)
-        self.reduce = nn.Linear(2 * d_model, d_model)
         self.dropout = nn.Dropout(dropout)
         self.norm = nn.LayerNorm(d_model, eps=1e-6)
         self.downsample = downsample
         self.use_checkpoint = True
         self.batch_norm = nn.BatchNorm1d(d_model)
+        self.fuse = GatedFusion(d_model)
     
     def _forward(self, x, mask=None):
         x_trans = x.transpose(1, 2)  # [B, C, L]
@@ -199,8 +212,7 @@ class GridEncoderLayer(nn.Module):
 
         cs1 = self.cross_atten1(tkn, ch, ch)
         cs2 = self.cross_atten2(ch, tkn, tkn)
-        cs = torch.cat([cs1, cs2], dim=-1)
-        x = x + self.reduce(cs)
+        x = x + self.fuse(cs1, cs2)
         
         x = self.dropout(x)
         x = self.norm(x)
