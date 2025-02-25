@@ -32,6 +32,7 @@ n_views: 12
 seed: 42
 batch_size: 32
 epochs: 100
+mixup: True
 
 # Optimization options
 optimizer: "Adam"

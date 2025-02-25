@@ -6,7 +6,7 @@ from .metrics import compute_avg_metrics
 import torch.distributed as dist
 from einops import rearrange
 from .pcgrad import PCGrad
-from .losses import APheSCL, MultiviewCrossEntropy
+from .losses import APheSCL, MultiviewCrossEntropy, MultiviewBCE
 from torch.utils.data import DataLoader
 from datasets import AbideROIDataset, Transforms, AdhdROIDataset
 from models import get_model
@@ -49,7 +49,7 @@ class Trainer:
                                         drop_last=False, num_workers=args.workers, pin_memory=True,
                                         collate_fn=AdhdROIDataset.collate_fn)
         
-        n_clasees = self.train_dataset.n_classes
+        n_clasees = 1 if args.mixup else self.train_dataset.n_classes
         self.n_classes = n_clasees
         args.n_classes = n_clasees
 
@@ -88,7 +88,7 @@ class Trainer:
                                        drop_last=False, num_workers=args.workers, pin_memory=True,
                                        collate_fn=AbideROIDataset.collate_fn)
         
-        n_classes = self.train_dataset.n_classes
+        n_classes = 1 if args.mixup else self.train_dataset.n_classes
         self.n_classes = n_classes
         args.n_classes = n_classes
         
@@ -116,7 +116,7 @@ class Trainer:
         # self.optimizer = PCGrad(opt)
         self.optimizer = PCGrad(opt, temperature=args.temp_gd, decay_rate=args.temp_decay) if args.pcgrad else opt
         
-        self.ce = MultiviewCrossEntropy().cuda()
+        self.ce = MultiviewBCE().cuda() if args.mixup else MultiviewCrossEntropy().cuda()
         self.con = APheSCL(batch_size=args.batch_size, world_size=args.world_size, temperature=args.temp_con).cuda()
 
         if args.scheduler:
@@ -158,7 +158,7 @@ class Trainer:
                 self.train_loader.sampler.set_epoch(epoch)
             for data in self.train_loader:
                 data = {k: v.cuda(non_blocking=True) for k, v in data.items()}
-
+                
                 outputs = self.model(data['x']) 
                 cls_loss = self.ce(outputs.logits, data['label'])
                 con_loss = args.lambda_con * self.con(features=outputs.cp_features, labels=data['label'],

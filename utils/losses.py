@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 from .gather import GatherLayer
 import torch.nn.functional as F
 from einops import rearrange
@@ -403,3 +404,48 @@ class MultiviewFocalLoss(nn.Module):
             raise ValueError(f"Invalid mode: {self.mode}")
 
         return self.focal_loss(logits, labels)
+
+
+class MultiviewBCE(nn.Module):
+    def __init__(self, mode='all', alpha=1.0, device='cuda'):
+        super().__init__()  # Properly initialize the base class
+        self.ce = nn.BCEWithLogitsLoss(reduction='mean')  # Use BCEWithLogitsLoss for binary classification
+        self.mode = mode
+        self.alpha = alpha
+        self.device = device
+
+    def continus_mixup_data(self, logits, labels):
+        '''Returns mixed inputs and targets, and lambda'''
+        if self.alpha > 0:
+            lam = np.random.beta(self.alpha, self.alpha)
+        else:
+            lam = 1
+        
+        batch_size = labels.size(0)
+        index = torch.randperm(batch_size).to(self.device)
+        
+        # Mixup the logits and labels
+        mixed_logits = lam * logits + (1 - lam) * logits[index, :]
+        mixed_labels = lam * labels.float() + (1 - lam) * labels[index].float()
+        
+        return mixed_logits.view(-1), mixed_labels.view(-1)
+
+    def forward(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        # logits: [B, V, C] where C=1 for binary classification
+        # labels: [B]
+        B, V, C = logits.shape
+        
+        # Apply mixup
+        
+        if self.mode == 'all':
+            logits = logits.view(B * V, C)  # Reshape mixed logits to merge batch and views
+            labels = labels.unsqueeze(1).repeat(1, V).view(-1)  # Repeat mixed labels for each view and flatten
+        elif self.mode == 'one':
+            logits = logits[:, 0]  # Use only the first view's mixed logits
+            # mixed_labels remain unchanged
+        else:
+            raise ValueError(f"Invalid mode: {self.mode}")
+        
+        mixed_logits, mixed_labels = self.continus_mixup_data(logits, labels)
+
+        return self.ce(mixed_logits, mixed_labels)
