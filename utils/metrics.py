@@ -8,7 +8,7 @@ def compute_avg_metrics(ground_truth, activations, avg='micro'):
 
     ground_truth = ground_truth.cpu().detach().numpy()
     activations = activations.cpu().detach().numpy()
-    predictions = np.argmax(activations, -1)
+    predictions = np.argmax(activations, -1) if activations.shape[1] > 1 else np.round(activations)
 
     multi_class = 'ovr'
     ill_avg = avg

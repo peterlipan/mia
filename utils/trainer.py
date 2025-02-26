@@ -137,7 +137,8 @@ class Trainer:
             for data in loader:
                 data = {k: v.cuda(non_blocking=True) for k, v in data.items()}
                 outputs = self.model(data['x'])
-                pred = F.softmax(outputs.logits.squeeze(1), dim=-1) # [B, 1, C] -> [B, C]
+                logits = outputs.logits.squeeze(1) if outputs.logits.dim() > 2 else outputs.logits # [B, 1, C] -> [B, C]
+                pred = F.softmax(logits, dim=-1) if logits.size(-1) > 1 else F.sigmoid(logits) 
                 ground_truth = torch.cat((ground_truth, data['label']))
                 predictions = torch.cat((predictions, pred))
             

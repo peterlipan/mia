@@ -15,7 +15,7 @@ checkpoints: "./checkpoints"
 model: "graphseq"
 embed_dim: 256
 d_inner: 512
-n_layers: 2
+n_layers: 1
 d_x: 16
 brain_graph: ""
 
@@ -26,11 +26,11 @@ task: "DX"
 atlas: "cc400"
 cnp: "Age, Performance IQ"
 cp: "Gender, Med Status"
-n_views: 12
+n_views: 8
 
 # Training Options
 seed: 42
-batch_size: 32
+batch_size: 24
 epochs: 100
 mixup: True
 
