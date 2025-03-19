@@ -6,6 +6,7 @@ __pycache__/
 # CSV files
 *.csv
 !datasets/splits/*.csv
+!datasets/allSubs_testSet_phenotypic_dx.csv
 
 # wandb
 wandb/
