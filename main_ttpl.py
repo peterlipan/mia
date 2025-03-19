@@ -26,14 +26,14 @@ def main(gpu, args, wandb_logger):
     np.random.seed(args.seed)
 
     trainer = Trainer(args, wandb_logger)
-    trainer.run(args)
+    trainer.run_ttpl(args)
 
 
 
 if __name__ == '__main__':
     # args
     parser = argparse.ArgumentParser()
-    yaml_config = yaml_config_hook("./configs/ABIDE.yaml")
+    yaml_config = yaml_config_hook("./configs/ADHD.yaml")
     for k, v in yaml_config.items():
         parser.add_argument(f"--{k}", default=v, type=type(v))
 

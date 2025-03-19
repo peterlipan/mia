@@ -1,17 +1,12 @@
+#!/bin/bash
 
-python3 main.py --con_temp 0.1 --d_x 32
-python3 main.py --con_temp 0.1 --d_x 64
+# Define the models and seeds
+seeds=(1 42 123 456 789)
+atlases=("cc400" "cc200" "aal")
 
-python3 main.py --con_temp 0.2 --d_x 32
-python3 main.py --con_temp 0.2 --d_x 64
-
-python3 main.py --con_temp 0.3 --d_x 32
-python3 main.py --con_temp 0.3 --d_x 64
-
-python3 main.py --con_temp 0.4 --d_x 32
-python3 main.py --con_temp 0.4 --d_x 64
-
-python3 main.py --con_temp 0.5 --d_x 32
-python3 main.py --con_temp 0.5 --d_x 64
-
-
+# Iterate over each model and seed
+for seed in "${seeds[@]}"; do
+    for atlas in "${atlases[@]}"; do
+        python3 main.py --seed "$seed" --atlas "$atlas"
+    done
+done

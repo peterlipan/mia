@@ -108,18 +108,19 @@ class SupConLoss(nn.Module):
         return loss
 
 class APheSCL(nn.Module):
-    def __init__(self, world_size, batch_size, temperature=0.07):
+    def __init__(self, world_size, batch_size, temperature=0.07, alpha=5.0):
         super().__init__()
         self.world_size = world_size
         self.batch_size = batch_size
         self.temperature = temperature
         self.contrastive_loss = SupConLoss(temperature)
+        self.alpha = alpha
 
     def compute_categorical_sim(self, cat_phenotypes):
         device = cat_phenotypes.device
         batch_size, n_features = cat_phenotypes.shape
         
-        similarity = torch.zeros(batch_size, batch_size, device=device)
+        similarity = torch.ones(batch_size, batch_size, device=device)
         
         for i in range(n_features):
             feature = cat_phenotypes[:, i]            
@@ -155,7 +156,7 @@ class APheSCL(nn.Module):
         batch_size, n_features = cont_phenotypes.shape
         
         # Initialize similarity matrix
-        similarity = torch.zeros(batch_size, batch_size, device=device)
+        similarity = torch.ones(batch_size, batch_size, device=device)
         
         for i in range(n_features):
             feature = cont_phenotypes[:, i]            
@@ -202,11 +203,20 @@ class APheSCL(nn.Module):
         
         if cat_phenotypes is not None:
             cat_sim = self.compute_categorical_sim(cat_phenotypes)
-            phenotype_sim += cat_sim
+            cat_sim[cat_sim > 1] *= self.alpha
+            cat_sim[cat_sim < 1] /= self.alpha
+            phenotype_sim *= cat_sim
             
         if cont_phenotypes is not None:
             cont_sim = self.compute_continuous_sim(cont_phenotypes)
-            phenotype_sim += cont_sim       
+            cont_sim[cont_sim > 1] *= self.alpha
+            cont_sim[cont_sim < 1] /= self.alpha
+            phenotype_sim *= cont_sim    
+
+        # print(f"Max scale factor: {phenotype_sim.max().item()}")
+        # print(f"Min scale factor: {phenotype_sim.min().item()}")   
+        # print(f"Mean scale factor: {phenotype_sim.mean().item()}")
+        # print(f"Median scale factor: {phenotype_sim.median().item()}")
         
         return phenotype_sim
 
@@ -222,6 +232,9 @@ class APheSCL(nn.Module):
         scale_factors = self.compute_scale_factors(cat_phenotypes, cont_phenotypes)
         
         loss = self.contrastive_loss(features, labels, scale_factors)
+        if labels is not None:
+            loss += self.contrastive_loss(features, None, scale_factors)
+
         return loss
 
 

@@ -12,7 +12,7 @@ import subprocess
 import pandas as pd
 from tqdm import tqdm
 
-atlas2num_roi = {'cc400': 351}
+atlas2num_roi = {'cc400': 351, 'cc200': 190, 'ho': 110, 'aal': 115}
 
 
 class Site:
@@ -102,7 +102,7 @@ def main(args):
         site_obj = Site(site, site_dir, test=False, target_num_roi=target_num_roi)
         site_obj.move_sample_files(target_dir)
         df = pd.concat([df, site_obj.file_df], axis=0)
-        df.to_csv(os.path.join(args.split, 'ADHD200_Training.csv'), index=False)
+        df.to_csv(os.path.join(args.split, f'ADHD200_{args.atlas.lower()}_Training.csv'), index=False)
     with open(os.devnull, 'wb') as devnull:
         subprocess.call(f'rm -rf {temp_dir}', shell=True, stdout=devnull, stderr=devnull)
 
@@ -119,7 +119,7 @@ def main(args):
         site_obj = Site(site, site_dir, test=True, target_num_roi=target_num_roi)
         site_obj.move_sample_files(target_dir)
         df = pd.concat([df, site_obj.file_df], axis=0)
-        df.to_csv(os.path.join(args.split, 'ADHD200_Testing.csv'), index=False)
+        df.to_csv(os.path.join(args.split, f'ADHD200_{args.atlas.lower()}_Testing.csv'), index=False)
     with open(os.devnull, 'wb') as devnull:
         subprocess.call(f'rm -rf {temp_dir}', shell=True, stdout=devnull, stderr=devnull)
     
@@ -128,7 +128,7 @@ def main(args):
     test_csv['ID'] = test_csv['ID'].apply(lambda x: f'{x:07d}')
     df = df[['Filename', 'Subject_ID', 'Num_ROI', 'Seq_len']] # only keep the necessary columns
     df = pd.merge(left=df, right=test_csv, left_on='Subject_ID', right_on='ID', how='inner')
-    df.to_csv(os.path.join(args.split, 'ADHD200_Testing.csv'), index=False)
+    df.to_csv(os.path.join(args.split, f'ADHD200_{args.atlas.lower()}_Testing.csv'), index=False)
 
     print('Done!')
 
@@ -137,7 +137,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--src', type=str, default='/home/r20user17/Documents')
     parser.add_argument('--dst', type=str, default='/home/r20user17/Documents/ADHD200')
-    parser.add_argument('--split', type=str, default='/home/r20user17/mia/datasets/splits')
+    parser.add_argument('--split', type=str, default='./splits')
     parser.add_argument('--test_csv', type=str, default='./allSubs_testSet_phenotypic_dx.csv')
     parser.add_argument('--atlas', type=str, default='CC400')
     args = parser.parse_args()

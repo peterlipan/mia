@@ -3,7 +3,7 @@ nodes: 1
 gpus: 4
 nr: 0
 workers: 0
-visible_gpus: "0,1,2,3"
+visible_gpus: "0,1,2,4"
 
 # Paths
 data_root: "/home/r20user17/Documents/ABIDE_pcp/cpac/filt_noglobal"
@@ -11,40 +11,41 @@ train_csv: "./datasets/splits/ABIDE_Training.csv"
 test_csv: "./datasets/splits/ABIDE_Testing.csv"
 val_csv: "./datasets/splits/ABIDE_Validation.csv"
 checkpoints: "./checkpoints"
+reload: "./checkpoints/ABIDE_BNT_cc400_DX_AUC_0.7891_.pth"
 
 # Model Options
 model: "graphseq"
 embed_dim: 392
-d_inner: 512
-n_layers: 5
+d_inner: 1024
+n_layers: 3
 d_x: 32
-brain_graph: ""
 
 # Dataset Options
 dataset: "ABIDE_BNT"
 task: "DX"
 atlas: "cc400"
-cnp: "AGE_AT_SCAN, BMI"
-cp: "SEX, HANDEDNESS_CATEGORY, CURRENT_MED_STATUS"
+cnp: "AGE_AT_SCAN, HANDEDNESS_SCORES"
+cp: "SEX, HANDEDNESS_CATEGORY, EYE_STATUS_AT_SCAN"
 n_views: 14
 
 # Training Options
 seed: 42
 batch_size: 20
-epochs: 200
+epochs: 60
 mixup: True
 
 # Optimization options
 optimizer: "Adam"
 pcgrad: False
-lr: 1.0e-4
-ttpl: 1.0e-5
-lr_ttt: 1.0e-7
-dropout: 0.4
-weight_decay: 0.03
+lr: 2.0e-4
+ttpl_lr: 1.0e-7
+ttpl_ratio: 2.0
+dropout: 0.5
+weight_decay: 0.01
 warmup_epochs: 10
 scheduler: True
-lambda_con: 0.05
+lambda_con: 0.03
+alpha_con: 5.0
 temp_con: 0.07
 temp_gd: 1.0
 temp_decay: 0.999

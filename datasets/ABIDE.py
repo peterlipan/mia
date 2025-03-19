@@ -8,6 +8,7 @@ from einops import rearrange
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
 from sklearn.preprocessing import OneHotEncoder
+from .transforms import ROIWiseNormalize
 
 
 class AbideFrameDataset(Dataset):
@@ -168,6 +169,8 @@ class AbideROIDataset(Dataset):
         self.num_cp = len(self.category_phenotype_names) + 1 # add label information
         self.num_cnp = len(self.continuous_phenotype_names)
 
+        self.test_transforms = ROIWiseNormalize()
+
 
     @staticmethod
     def _string2index(data):
@@ -197,13 +200,13 @@ class AbideROIDataset(Dataset):
         if self.transforms:
             temp = [torch.from_numpy(self.transforms(roi).T) for _ in range(self.n_views - 1)]
             # append the original view
-            temp.append(torch.from_numpy(roi.T))
+            temp.append(torch.from_numpy(self.test_transforms(roi).T))
             roi = pad_sequence(temp, batch_first=True) # [V, T, N]
             roi = rearrange(roi, 'v t n -> t v n') # [V, N, T] -> [T, V, N]            
 
         else:
             # [N, T] -> [T, 1, N]
-            roi = torch.from_numpy(roi.T).unsqueeze(1).float()
+            roi = torch.from_numpy(self.test_transforms(roi).T).unsqueeze(1).float()
 
         return roi, label, cnp_label, cp_label
 

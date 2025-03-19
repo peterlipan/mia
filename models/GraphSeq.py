@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from .utils import ModelOutputs
 from torch.utils.checkpoint import checkpoint
+from .Sparsemax import Sparsemax
 
 
 class LineaEmbedding(nn.Module):
@@ -56,6 +57,7 @@ class MultiheadChannelAttention(nn.Module):
 
         self.d_x = d_x
         self.n_head = n_head
+        self.softmax = Sparsemax(dim=-1)
         
         # Use a single projection matrix for Q, K, V
         self.w_qkv = nn.Linear(d_model, n_head * d_x * 3, bias=bias)
@@ -65,7 +67,7 @@ class MultiheadChannelAttention(nn.Module):
     def ScaledDotProductChannelAttention(self, query, key, value):
         dx = query.size()[-1]
         scores = query.transpose(-2, -1).matmul(key) / math.sqrt(dx)
-        attention = F.softmax(scores, dim=-1)
+        attention = self.softmax(scores)
         attention = self.dropout(attention)
         return value.matmul(attention)
 
@@ -234,7 +236,7 @@ class TokenMerging(nn.Module):
         self.norm = nn.LayerNorm(2 * d_model)
     
     def forward(self, x):
-        b, l, _ = x.size()
+        _, l, _ = x.size()
 
         if l % 2 != 0:
             padding = x[:, -1:, :]  # Take the last token
@@ -287,7 +289,7 @@ class SinusoidalPositionalEncoding(nn.Module):
 
 class GraphSeq(nn.Module):
     def __init__(self, d_in, d_model=256, n_classes=2, max_len=1000, n_layers=6, n_head=8, d_x=32,
-            d_inner=512, dropout=0.1, num_phenotype=10, brain_graph="small-world"):
+            d_inner=512, dropout=0.1, num_phenotype=10):
         super(GraphSeq, self).__init__()
 
         self.d_model = d_in if d_in % n_head == 0 else d_model
@@ -318,8 +320,6 @@ class GraphSeq(nn.Module):
             nn.Linear(self.d_model, 128)
         )
         
-        # self.adj = self._generate_adj_matrix(self.d_model, brain_graph)
-
         self._init_params()
 
     
@@ -338,55 +338,6 @@ class GraphSeq(nn.Module):
                 nn.init.constant_(module.bias, 0)
                 nn.init.constant_(module.weight, 1.0)
 
-
-    @staticmethod
-    def _generate_adj_matrix(num_nodes, graph_type, **kwargs):
-        """Generates adjacency matrix based on the specified graph structure."""
-
-        adj_matrix = 0.3 * np.ones((num_nodes, num_nodes), dtype=np.float32)
-
-        if graph_type == 'random':
-            edge_prob = kwargs.get('edge_prob', 0.3)  # Default probability
-            for i in range(num_nodes):
-                for j in range(num_nodes):
-                    if i != j and np.random.rand() < edge_prob:
-                        adj_matrix[i, j] = 1.0
-        
-        elif graph_type == 'scale-free':
-            G = nx.barabasi_albert_graph(num_nodes, 2)  # 2 edges to attach from a new node to existing nodes
-            for edge in G.edges:
-                adj_matrix[edge[0], edge[1]] = 1.0
-                adj_matrix[edge[1], edge[0]] = 1.0  # Assuming undirected graph
-        
-        elif graph_type == 'small-world':
-            k = kwargs.get('k', 4)  # Each node is connected to k nearest neighbors
-            p = kwargs.get('p', 0.1)  # Probability of rewiring each edge
-            G = nx.watts_strogatz_graph(num_nodes, k, p)
-            for edge in G.edges:
-                adj_matrix[edge[0], edge[1]] = 1.0
-                adj_matrix[edge[1], edge[0]] = 1.0  # Assuming undirected graph
-        
-        elif graph_type == 'fully-connected':
-            for i in range(num_nodes):
-                for j in range(num_nodes):
-                    if i != j:
-                        adj_matrix[i, j] = 1.0
-        
-        else:
-            raise ValueError("Unsupported graph type. Choose from 'random', 'scale-free', 'small-world', or 'fully-connected'.")
-        adj_matrix = torch.tensor(adj_matrix, dtype=torch.float32)
-        adj_matrix = nn.Parameter(adj_matrix, requires_grad=True)
-        return adj_matrix
-    
-    @staticmethod
-    def _prepare_adj(adj, device):
-        """Prepares the adjacency matrix for use in the model."""
-        adj = adj.to(device)
-        # Ensure the adjacency matrix is symmetric
-        adj = adj.matmul(adj.transpose(-1, -2))
-        # Normalize the adjacency matrix
-        adj = F.softmax(adj, dim=-1)
-        return adj
 
     def forward(self, x):
         # x: [B, T, V, N]

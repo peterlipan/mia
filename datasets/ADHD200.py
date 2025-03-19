@@ -12,7 +12,7 @@ class AdhdROIDataset(Dataset):
     def __init__(self, csv, data_root, atlas, n_views, transforms, filter='Yes', cp="", cnp="", task='DX'):
         super().__init__()
         self.filter = filter
-        if filter == 'both':
+        if filter == 'Both':
             self.csv = csv
         elif filter == 'Yes':
             self.csv = csv[csv['Filename'].str.startswith('sf')]

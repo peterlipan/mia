@@ -418,5 +418,7 @@ class Transforms:
                 GlobalSignalModulation(),
                 NonLinearTrend(),
             ], p=0.5),
+
+            ROIWiseNormalize(),
         ])
         self.test_transforms = None

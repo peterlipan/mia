@@ -7,43 +7,44 @@ visible_gpus: "0,1,2,3"
 
 # Paths
 data_root: "/home/r20user17/Documents/ADHD200"
-train_csv: "./datasets/splits/ADHD200_Training.csv"
-test_csv: "./datasets/splits/ADHD200_Testing.csv"
+csv_path: "./datasets/splits"
 checkpoints: "./checkpoints"
+reload: "./checkpoints/ADHD200_ho_DX_AUC_0.6784_.pth"
 
 # Model Options
 model: "graphseq"
 embed_dim: 256
-d_inner: 512
+d_inner: 1024
 n_layers: 1
 d_x: 16
-brain_graph: ""
 
 
 # Dataset Options
 dataset: "ADHD200"
 task: "DX"
-atlas: "cc400"
+atlas: "ho"
 cnp: "Age, Performance IQ"
-cp: "Gender, Med Status"
-n_views: 8
+cp: "Gender"
+n_views: 12
 
 # Training Options
 seed: 42
-batch_size: 24
-epochs: 100
+batch_size: 32
+epochs: 60
 mixup: True
 
 # Optimization options
 optimizer: "Adam"
 pcgrad: False
 lr: 2.0e-4
-ttpl: 1.0e-7
+ttpl_lr: 1.0e-7
+ttpl_ratio: 2.0
 dropout: 0.5
-weight_decay: 0.1
+weight_decay: 0.01
 warmup_epochs: 10
 scheduler: True
-lambda_con: 0.05
+lambda_con: 0.03
+alpha_con: 5.0
 temp_con: 0.07
 temp_gd: 1.0
 temp_decay: 0.999

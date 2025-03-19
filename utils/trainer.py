@@ -22,15 +22,23 @@ class Trainer:
         self.transforms = Transforms()
         self.logger = logger
         self.args = args
+        self.result_csv_name = f"results_{args.dataset}_{args.task}.csv"
     
     def init_adhd_datasets(self, args):
-        train_csv = pd.read_csv(args.train_csv)
-        test_csv = pd.read_csv(args.test_csv)
+        train_csv_path = os.path.join(args.csv_path, f"ADHD200_{args.atlas.lower()}_Training.csv")
+        test_csv_path = os.path.join(args.csv_path, f"ADHD200_{args.atlas.lower()}_Testing.csv")
+        train_csv = pd.read_csv(train_csv_path)
+        test_csv = pd.read_csv(test_csv_path)
+        ttpl_len = int(test_csv.shape[0] * args.ttpl_ratio)
+        train_sample = train_csv.sample(n=ttpl_len, random_state=args.seed)
+        ttpl_csv = pd.concat([train_sample, test_csv])
         self.train_dataset = AdhdROIDataset(train_csv, args.data_root, atlas=args.atlas, n_views=args.n_views,
-                                            transforms=self.transforms.train_transforms, cp=args.cp, cnp=args.cnp, task=args.task)
+                                            transforms=self.transforms.train_transforms, cp=args.cp, cnp=args.cnp, 
+                                            task=args.task, filter='Both')
         # For test-time phenotype learning
-        self.ttpl_dataset = AdhdROIDataset(test_csv, args.data_root, atlas=args.atlas, n_views=args.n_views,
-                                           transforms=self.transforms.train_transforms, cp=args.cp, cnp=args.cnp, task=args.task)
+        self.ttpl_dataset = AdhdROIDataset(ttpl_csv, args.data_root, atlas=args.atlas, n_views=args.n_views,
+                                           transforms=self.transforms.train_transforms, cp=args.cp, cnp=args.cnp, 
+                                            task=args.task, filter='Yes')
         if args.world_size > 1:
             train_sampler = torch.utils.data.distributed.DistributedSampler(
                 self.train_dataset, num_replicas=args.world_size, rank=args.rank, shuffle=True
@@ -59,6 +67,7 @@ class Trainer:
             self.test_loader = DataLoader(self.test_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False,
                                          num_workers=args.workers, pin_memory=True, collate_fn=AdhdROIDataset.collate_fn)
             self.val_loader = None
+            print(f"Train: {len(self.train_dataset)}, Test: {len(self.test_dataset)}, TTPL: {len(self.ttpl_dataset)}")
         else:
             self.test_loader = None
             self.val_loader = None
@@ -67,9 +76,12 @@ class Trainer:
         train_csv = pd.read_csv(args.train_csv)
         test_csv = pd.read_csv(args.test_csv)
         val_csv = pd.read_csv(args.val_csv)
+        ttpl_len = int(test_csv.shape[0] * args.ttpl_ratio)
+        train_sample = train_csv.sample(n=ttpl_len, random_state=args.seed)
+        ttpl_csv = pd.concat([train_sample, test_csv])
         self.train_dataset = AbideROIDataset(train_csv, args.data_root, atlas=args.atlas, task=args.task, n_views=args.n_views,
-                                          transforms=self.transforms.train_transforms, cp=args.cp, cnp=args.cnp)
-        self.ttpl_dataset = AbideROIDataset(train_csv, args.data_root, atlas=args.atlas, task=args.task, n_views=args.n_views,
+                                             transforms=self.transforms.train_transforms, cp=args.cp, cnp=args.cnp)
+        self.ttpl_dataset = AbideROIDataset(ttpl_csv, args.data_root, atlas=args.atlas, task=args.task, n_views=args.n_views,
                                           transforms=self.transforms.train_transforms, cp=args.cp, cnp=args.cnp)
         if args.world_size > 1:
             train_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -102,14 +114,19 @@ class Trainer:
                                             transforms=self.transforms.test_transforms, cp=args.cp, cnp=args.cnp)
             self.val_loader = DataLoader(self.val_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False,
                                           num_workers=args.workers, pin_memory=True, collate_fn=AbideROIDataset.collate_fn)
+            print(f"Train: {len(self.train_dataset)}, Test: {len(self.test_dataset)}, TTPL: {len(self.ttpl_dataset)}")
+
         else:
             self.test_loader = None
             self.val_loader = None
     
-    def init_model(self, args):
+    def init_model(self, args, reload=False):
         
         step_per_epoch = len(self.train_dataset) // (args.batch_size * args.world_size)
-        self.model = get_model(args).cuda()
+        self.model = get_model(args)
+        if reload:
+            self.model.load_state_dict(torch.load(args.reload))
+        self.model = self.model.cuda()
 
         opt = getattr(torch.optim, args.optimizer)(self.model.parameters(), lr=args.lr,
                                                               weight_decay=args.weight_decay)
@@ -117,7 +134,8 @@ class Trainer:
         self.optimizer = PCGrad(opt, temperature=args.temp_gd, decay_rate=args.temp_decay) if args.pcgrad else opt
         
         self.ce = MultiviewBCE().cuda() if args.mixup else MultiviewCrossEntropy().cuda()
-        self.con = APheSCL(batch_size=args.batch_size, world_size=args.world_size, temperature=args.temp_con).cuda()
+        self.con = APheSCL(batch_size=args.batch_size, world_size=args.world_size, 
+                            temperature=args.temp_con, alpha=args.alpha_con).cuda()
 
         if args.scheduler:
             self.scheduler = get_cosine_schedule_with_warmup(opt, args.warmup_epochs * step_per_epoch, 
@@ -187,7 +205,7 @@ class Trainer:
                             print(f'None grad: {name}')
                     grad_norm = grad_norm ** 0.5
                 
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
+                # torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
 
                 self.optimizer.step()
 
@@ -212,12 +230,15 @@ class Trainer:
                                                 'loss': loss.item(),
                                                  'cls_loss': cls_loss.item(), 
                                                  'con_loss': con_loss.item(),}})
-        if args.rank == 0:
-            self.save_model(args)
+
 
     def test_time_phenotype_learning(self, args):
         self.model.train()
-        opt = torch.optim.Adam(self.model.parameters(), lr=args.ttpl, weight_decay=args.weight_decay)
+        # disable dropout
+        dropout_modules = [module for module in self.model.modules() if isinstance(module,torch.nn.Dropout)]
+        for module in dropout_modules:
+            module.eval()
+        opt = torch.optim.Adam(self.model.parameters(), lr=args.ttpl_lr)
         opt.zero_grad()
         for data in self.ttpl_loader:
             data = {k: v.cuda(non_blocking=True) for k, v in data.items()}
@@ -232,14 +253,10 @@ class Trainer:
                 if p.grad is not None:
                     dist.all_reduce(p.grad.data, op=dist.ReduceOp.SUM)
                     p.grad.data /= dist.get_world_size()  # Average gradients across all GPUs
-                else:
-                    print(f'None grad: {name}')
+
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
         opt.step()
-        
-        if args.rank == 0:
-            performance = self.validate(self.test_loader)
-            print(f'Test time training: {performance}')
+
 
     def run(self, args):
         if 'ABIDE' in args.dataset:
@@ -251,11 +268,16 @@ class Trainer:
         if args.rank == 0:
             metrics = self.validate(self.test_loader)
             print(f'Final: {metrics}')
+            self.save_model(args, metrics)
+            self.save_results(args, metrics)
         self.test_time_phenotype_learning(args)
+        if args.rank == 0:
+            metrics = self.validate(self.test_loader)
+            print(f'Final: {metrics}')
+            self.save_results(args, metrics, ttpl=True)
 
-    def save_model(self, args):
+    def save_model(self, args, performance):
         state_dict = self.model.module.state_dict() if isinstance(self.model, DDP) else self.model.state_dict()
-        performance = self.validate(self.test_loader)
         save_path = os.path.join(args.checkpoints, f"{args.dataset}_{args.atlas}_{args.task}_AUC_{performance['AUC']:.4f}_.pth")
         torch.save(state_dict, save_path)
     
@@ -268,3 +290,29 @@ class Trainer:
         model_path = os.path.join(args.checkpoints, candidates[-1])
         state_dict = torch.load(model_path)
         self.model.load_state_dict(state_dict)
+
+    def save_results(self, args, metrics, ttpl=False):
+        cols = ['Model', 'Dataset', 'Atlas', 'Task', 'Seed'] + list(metrics.keys())
+        if not os.path.exists(self.result_csv_name):
+            results = pd.DataFrame(columns=cols)
+        else:
+            results = pd.read_csv(self.result_csv_name)
+            assert set(results.columns) == set(cols), "Columns mismatch"
+        model_name = args.model if not ttpl else f'{args.model} w/ TTPL'
+        row = [model_name, args.dataset, args.atlas, args.task, args.seed] + [metrics[key] for key in metrics.keys()]
+        results = results._append(pd.Series(row, index=cols), ignore_index=True)
+        results.to_csv(self.result_csv_name, index=False)
+    
+
+    def run_ttpl(self, args):
+        if 'ABIDE' in args.dataset:
+            self.init_abide_datasets(args)
+        else:
+            self.init_adhd_datasets(args)
+        args.dropout = 0.0
+        self.init_model(args, reload=True)
+        self.test_time_phenotype_learning(args)
+        if args.rank == 0:
+            metrics = self.validate(self.test_loader)
+            print(f'Final: {metrics}')
+            # self.save_results(args, metrics, ttpl=True)
