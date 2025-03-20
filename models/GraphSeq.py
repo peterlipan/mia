@@ -184,12 +184,16 @@ class GatedFusion(nn.Module):
 
 
 class GridEncoderLayer(nn.Module):
-    def __init__(self, d_model, d_inner=1024, n_head=8, d_x=64, dropout=0.1, downsample=None):
+    def __init__(self, d_model, d_inner=1024, n_head=8, d_x=64, dropout=0.1, downsample=None,
+                 spatial_attention=True, temporal_attention=True):
         super().__init__()
-        self.ch_atten = MultiheadChannelAttention(d_model, n_head, d_x, dropout)
-        self.tkn_attn = MultiheadTokenAttention(d_model, n_head, d_x, dropout)
-        self.cross_atten1 = MultiheadTokenAttention(d_model, n_head, d_x, dropout)
-        self.cross_atten2 = MultiheadTokenAttention(d_model, n_head, d_x, dropout)
+        self.spatial_attention = spatial_attention
+        self.temporal_attention = temporal_attention
+        self.cross_attention = spatial_attention and temporal_attention
+        self.spat_attn = MultiheadChannelAttention(d_model, n_head, d_x, dropout) if spatial_attention else None
+        self.temp_attn = MultiheadTokenAttention(d_model, n_head, d_x, dropout) if temporal_attention else None
+        self.cross_atten1 = MultiheadTokenAttention(d_model, n_head, d_x, dropout) if self.cross_attention else None
+        self.cross_atten2 = MultiheadTokenAttention(d_model, n_head, d_x, dropout) if self.cross_attention else None
         
         # Add feedforward network
         self.ffn = PositionwiseFeedForward(d_model, d_inner, d_model, dropout=dropout)
@@ -198,7 +202,7 @@ class GridEncoderLayer(nn.Module):
         self.downsample = downsample
         self.use_checkpoint = True
         self.batch_norm = nn.BatchNorm1d(d_model)
-        self.fuse = GatedFusion(d_model)
+        self.fuse = GatedFusion(d_model) if self.cross_attention else None
     
     def _forward(self, x, mask=None):
         x_trans = x.transpose(1, 2)  # [B, C, L]
@@ -206,15 +210,22 @@ class GridEncoderLayer(nn.Module):
 
         if self.downsample is not None:
             x = self.downsample(x)
-        # Channel attention with residual
-        ch = self.ch_atten(x)
-        
-        # Token attention with residual
-        tkn = self.tkn_attn(x, mask)
 
-        cs1 = self.cross_atten1(tkn, ch, ch)
-        cs2 = self.cross_atten2(ch, tkn, tkn)
-        x = x + self.fuse(cs1, cs2)
+        # spatial attention
+        if self.spatial_attention:
+            xs = self.spat_attn(x)
+        
+        # temporal attention
+        if self.temporal_attention:
+            xt = self.temp_attn(x)
+        
+        if self.cross_attention:
+            xtc = self.cross_atten1(xt, xs, xs)
+            xsc = self.cross_atten2(xs, xt, xt)
+            x = x + self.fuse(xtc, xsc)
+        
+        else:
+            x = xt if self.temporal_attention else xs
         
         x = self.dropout(x)
         x = self.norm(x)
@@ -289,7 +300,7 @@ class SinusoidalPositionalEncoding(nn.Module):
 
 class GraphSeq(nn.Module):
     def __init__(self, d_in, d_model=256, n_classes=2, max_len=1000, n_layers=6, n_head=8, d_x=32,
-            d_inner=512, dropout=0.1, num_phenotype=10):
+            d_inner=512, dropout=0.1, num_phenotype=10, spatial_attention=True, temporal_attention=True):
         super(GraphSeq, self).__init__()
 
         self.d_model = d_in if d_in % n_head == 0 else d_model
@@ -304,11 +315,13 @@ class GraphSeq(nn.Module):
 
         self.drop_out = nn.Dropout(dropout)
 
-        layers = [GridEncoderLayer(self.d_model, d_inner, n_head=n_head, d_x=d_x, dropout=dropout)]
+        layers = [GridEncoderLayer(self.d_model, d_inner, n_head=n_head, d_x=d_x, dropout=dropout, downsample=None,
+                                   spatial_attention=spatial_attention, temporal_attention=temporal_attention)]
         if n_layers > 1:
             for _ in range(n_layers - 1):
                 layers.append(GridEncoderLayer(self.d_model, d_inner, n_head=n_head, d_x=d_x, 
-                dropout=dropout, downsample=TokenMerging(self.d_model)))
+                dropout=dropout, downsample=TokenMerging(self.d_model),
+                spatial_attention=spatial_attention, temporal_attention=temporal_attention))
 
         self.layers = nn.ModuleList(layers)
         
