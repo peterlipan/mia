@@ -17,7 +17,7 @@ embed_dim: 256
 d_inner: 1024
 n_layers: 1
 d_x: 16
-spatial_attention: False
+spatial_attention: True
 temporal_attention: True
 
 

@@ -33,18 +33,25 @@ class AdhdROIDataset(Dataset):
             self.labels[self.labels > 0] = 1 
         self.n_classes = len(np.unique(self.labels))
 
+        if cp:
+            self.cp_columns = cp.replace(' ', '').split(',')
+            self.cp_fea = self.csv[self.cp_columns].fillna(-1).values.astype(int)
+            self.cp_fea[self.cp_fea < 0] = -1
+            self.num_cp = len(self.cp_columns) + 1
+        else:
+            self.cp_columns = None
+            self.cp_fea = None
+            self.num_cp = 1
+        if cnp:
+            self.cnp_columns = cnp.replace(' ', '').split(',')
+            self.cnp_fea = self.csv[self.cnp_columns].fillna(-1).values.astype(float)
+            self.cnp_fea[self.cnp_fea < 0] = -1
+            self.num_cnp = len(self.cnp_columns)
+        else:
+            self.cnp_columns = None
+            self.cnp_fea = None
+            self.num_cnp = 0
 
-        self.cp_columns = cp.split(', ')
-        self.cnp_columns = cnp.split(', ')
-
-        self.cp_labels = self.csv[self.cp_columns].values.astype(int)
-        self.cnp_labels = self.csv[self.cnp_columns].values.astype(float)
-
-        self.cp_labels[self.cp_labels < 0] = -1
-        self.cnp_labels[self.cnp_labels < 0] = -1
-
-        self.num_cp = len(self.cp_columns) + 1
-        self.num_cnp = len(self.cnp_columns)
     
     def __len__(self):
         return len(self.labels)
@@ -54,8 +61,8 @@ class AdhdROIDataset(Dataset):
         subject = row['Subject_ID']
         filename = row['Filename']
         label = self.labels[idx]
-        cp_label = self.cp_labels[idx]
-        cnp_label = self.cnp_labels[idx]
+        cp_label = self.cp_fea[idx]
+        cnp_label = self.cnp_fea[idx]
         file_path = os.path.join(self.data_path, subject, filename)
         roi = pd.read_csv(file_path, sep='\t').values[:, 2:].astype(float).T # drop the first two columns
         if self.transforms:

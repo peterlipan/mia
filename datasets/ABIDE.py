@@ -117,25 +117,58 @@ class AbideFmriDataset(Dataset):
 
 
 class String2Index:
-    def __init__(self):
-        self.mapping = {}
-        self.reverse_mapping = {}
+    def __init__(self, unknown_token='unk'):
+        self.unknown_token = unknown_token
+        # Store mappings for each column: {column_idx: {value: index}}
+        self.column_value2idx = {}
+        # Reverse mappings: {column_idx: {index: value}}
+        self.column_idx2value = {}
     
     def fit(self, data):
-        unique_data = np.unique(data)
-        for i, d in enumerate(unique_data):
-            self.mapping[d] = i
-            self.reverse_mapping[i] = d
+        """Learn mappings for each column independently."""
+        n_columns = data.shape[1]
+        for col in range(n_columns):
+            # Get unique values in this column
+            unique_values = np.unique(data[:, col])
+            
+            # Create value-to-index mapping (0, 1, 2...)
+            value2idx = {val: idx for idx, val in enumerate(unique_values)}
+            # Explicitly map unknown_token to -1 (overwrite if present)
+            value2idx[self.unknown_token] = -1
+            
+            # Create reverse mapping (index-to-value)
+            idx2value = {idx: val for val, idx in value2idx.items()}
+            # Ensure -1 maps back to unknown_token
+            idx2value[-1] = self.unknown_token
+            
+            # Store both mappings
+            self.column_value2idx[col] = value2idx
+            self.column_idx2value[col] = idx2value
     
     def transform(self, data):
-        return np.array([self.mapping[d] for d in data])
+        """Convert string data to indices using learned mappings."""
+        transformed = np.empty_like(data, dtype=int)
+        for col in range(data.shape[1]):
+            col_mapping = self.column_value2idx.get(col, {})
+            for row in range(data.shape[0]):
+                # Use -1 as default for unseen values
+                transformed[row, col] = col_mapping.get(data[row, col], -1)
+        return transformed
     
     def reverse_transform(self, data):
-        return np.array([self.reverse_mapping[d] for d in data])
+        """Convert indices back to original strings."""
+        reversed_data = np.empty_like(data, dtype=object)
+        for col in range(data.shape[1]):
+            col_mapping = self.column_idx2value.get(col, {})
+            for row in range(data.shape[0]):
+                # Default to unknown_token for invalid indices
+                reversed_data[row, col] = col_mapping.get(data[row, col], self.unknown_token)
+        return reversed_data
 
 
 class AbideROIDataset(Dataset):
-    def __init__(self, csv, data_root, n_views, atlas='cc400', task='DX', transforms=None, cp="", cnp=""):
+    def __init__(self, csv, data_root, n_views, atlas='cc400', 
+                 task='DX', transforms=None, cp="", cnp="", string2index=None):
         self.csv = csv
         # keep consistent with the nan filling strategy
         csv = csv.fillna(-9999)
@@ -148,41 +181,35 @@ class AbideROIDataset(Dataset):
         self.transforms = transforms
         self.n_classes = len(np.unique(self.labels))
 
-        # self.num_fea_names = ['AGE_AT_SCAN', 'HANDEDNESS_SCORES', 'BMI']
-        # self.str_fea_names = ['SITE_ID', 'SEX', 'HANDEDNESS_CATEGORY', 'CURRENT_MED_STATUS']
-        self.category_phenotype_names = cp.split(', ')
-        self.continuous_phenotype_names = cnp.split(', ')
-        
-        self.cp_fea = csv[self.category_phenotype_names].values
-        self.cnp_fea = csv[self.continuous_phenotype_names].values
+        if cp:
+            self.category_phenotype_names = cp.replace(' ', '').split(',')
+            self.cp_fea = csv[self.category_phenotype_names].values.astype(str)
+            self.cp_fea[self.cp_fea == -9999] = 'unk'
+            self.cp_fea[self.cp_fea == '-9999'] = 'unk'
+            self.cp_fea[self.cp_fea == '`'] = 'unk'
+            if string2index:
+                self.cp_fea = string2index.transform(self.cp_fea)
+            else:
+                self.string2index = String2Index()
+                self.string2index.fit(self.cp_fea)
+                self.cp_fea = self.string2index.transform(self.cp_fea)
+            self.num_cp = len(self.category_phenotype_names) + 1
+        else:
+            self.category_phenotype_names = None
+            self.cp_fea = None
+            self.num_cp = 1
 
-        # TODO: deal with the missing values
-        self.cp_fea[self.cp_fea == -9999] = 'unk'
-        self.cp_fea[self.cp_fea == '-9999'] = 'unk'
-        # special case. The real-world data!
-        self.cp_fea[self.cp_fea == '`'] = 'unk'
-        self.cp_fea = self._string2index(self.cp_fea)
+        if cnp:
+            self.continuous_phenotype_names = cnp.replace(' ', '').split(',')
+            self.cnp_fea = csv[self.continuous_phenotype_names].values.astype(float)
+            self.cnp_fea[self.cnp_fea == -9999] = -1
+            self.cnp_fea[self.cnp_fea == '-9999'] = -1
+            self.num_cnp = len(self.continuous_phenotype_names)
+        else:
+            self.continuous_phenotype_names = None
+            self.cnp_fea = None
+            self.num_cnp = 0
 
-        self.cnp_fea[self.cnp_fea == -9999] = -1
-        self.cnp_fea[self.cnp_fea == '-9999'] = -1
-
-        self.num_cp = len(self.category_phenotype_names) + 1 # add label information
-        self.num_cnp = len(self.continuous_phenotype_names)
-
-
-
-    @staticmethod
-    def _string2index(data):
-        transformed_data = np.empty(data.shape, dtype=int)
-        for col in range(data.shape[1]):
-            unique_values = {value: idx for idx, value in enumerate(set(data[:, col]))}
-            # Map 'unk' to -1
-            unique_values['unk'] = -1
-        
-            for row in range(data.shape[0]):
-                transformed_data[row, col] = unique_values.get(data[row, col], -1)
-    
-        return transformed_data
 
     
     def __len__(self):

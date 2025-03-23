@@ -3,7 +3,7 @@ nodes: 1
 gpus: 4
 nr: 0
 workers: 0
-visible_gpus: "0,1,2,4"
+visible_gpus: "0,1,2,3"
 
 # Paths
 data_root: "/home/r20user17/Documents/ABIDE_pcp/cpac/filt_noglobal"
@@ -15,10 +15,12 @@ reload: "./checkpoints/ABIDE_BNT_cc400_DX_AUC_0.7891_.pth"
 
 # Model Options
 model: "graphseq"
-embed_dim: 392
+embed_dim: 256
 d_inner: 1024
-n_layers: 3
+n_layers: 5
 d_x: 32
+spatial_attention: True
+temporal_attention: True
 
 # Dataset Options
 dataset: "ABIDE_BNT"
@@ -26,18 +28,18 @@ task: "DX"
 atlas: "cc400"
 cnp: "AGE_AT_SCAN, HANDEDNESS_SCORES"
 cp: "SEX, HANDEDNESS_CATEGORY, EYE_STATUS_AT_SCAN"
-n_views: 14
+n_views: 12
 
 # Training Options
 seed: 42
-batch_size: 20
-epochs: 60
+batch_size: 32
+epochs: 200
 mixup: True
 
 # Optimization options
 optimizer: "Adam"
 pcgrad: False
-lr: 2.0e-4
+lr: 1.5e-4
 ttpl_lr: 1.0e-7
 ttpl_ratio: 2.0
 dropout: 0.5

@@ -181,7 +181,7 @@ class APheSCL(nn.Module):
             for idx1, i in enumerate(valid_indices):
                 for idx2, j in enumerate(valid_indices):
                     if i != j:
-                        dist = torch.abs(normalized[idx1] - normalized[idx2])
+                        dist = torch.square(normalized[idx1] - normalized[idx2])
                         dist_matrix[i, j] = dist
             
             # Convert distances to similarities using Gaussian kernel

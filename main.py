@@ -33,7 +33,7 @@ def main(gpu, args, wandb_logger):
 if __name__ == '__main__':
     # args
     parser = argparse.ArgumentParser()
-    yaml_config = yaml_config_hook("./configs/ADHD.yaml")
+    yaml_config = yaml_config_hook("./configs/ABIDE.yaml")
     for k, v in yaml_config.items():
         parser.add_argument(f"--{k}", default=v, type=type(v))
 
@@ -50,7 +50,9 @@ if __name__ == '__main__':
 
     # set number of rois according to the atlas
     atlas2roi = {'cc400': 392, 'ho': 111, 'cc200': 200, 'aal': 116} if 'ABIDE' in args.dataset else {'cc400': 351, 'cc200': 190, 'ho': 111, 'aal': 116}
+    atlas2embed = {'cc400': 392, 'ho': 112, 'cc200': 200, 'aal': 120} if 'ABIDE' in args.dataset else {'cc400': 256, 'cc200': 128, 'ho': 128, 'aal': 128}
     args.num_roi = atlas2roi[args.atlas]
+    # args.embed_dim = atlas2embed[args.atlas]
 
     # check checkpoints path
     if not os.path.exists(args.checkpoints):

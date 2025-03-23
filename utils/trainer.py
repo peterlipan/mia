@@ -81,8 +81,10 @@ class Trainer:
         ttpl_csv = pd.concat([train_sample, test_csv])
         self.train_dataset = AbideROIDataset(train_csv, args.data_root, atlas=args.atlas, task=args.task, n_views=args.n_views,
                                              transforms=self.transforms.train_transforms, cp=args.cp, cnp=args.cnp)
+        string2index = self.train_dataset.string2index # ensure consistent string2index mapping
         self.ttpl_dataset = AbideROIDataset(ttpl_csv, args.data_root, atlas=args.atlas, task=args.task, n_views=args.n_views,
-                                          transforms=self.transforms.train_transforms, cp=args.cp, cnp=args.cnp)
+                                          transforms=self.transforms.train_transforms, cp=args.cp, cnp=args.cnp,
+                                          string2index=string2index)
         if args.world_size > 1:
             train_sampler = torch.utils.data.distributed.DistributedSampler(
                 self.train_dataset, num_replicas=args.world_size, rank=args.rank, shuffle=True
@@ -106,12 +108,14 @@ class Trainer:
         
         if args.rank == 0:
             self.test_dataset = AbideROIDataset(test_csv, args.data_root, atlas=args.atlas, task=args.task, n_views=1,
-                                            transforms=self.transforms.test_transforms, cp=args.cp, cnp=args.cnp)
+                                            transforms=self.transforms.test_transforms, cp=args.cp, cnp=args.cnp,
+                                            string2index=string2index)
             self.test_loader = DataLoader(self.test_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False,
                                           num_workers=args.workers, pin_memory=True, collate_fn=AbideROIDataset.collate_fn)
             
             self.val_dataset = AbideROIDataset(val_csv, args.data_root, atlas=args.atlas, task=args.task, n_views=1,
-                                            transforms=self.transforms.test_transforms, cp=args.cp, cnp=args.cnp)
+                                            transforms=self.transforms.test_transforms, cp=args.cp, cnp=args.cnp,
+                                            string2index=string2index)
             self.val_loader = DataLoader(self.val_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False,
                                           num_workers=args.workers, pin_memory=True, collate_fn=AbideROIDataset.collate_fn)
             print(f"Train: {len(self.train_dataset)}, Test: {len(self.test_dataset)}, TTPL: {len(self.ttpl_dataset)}")
