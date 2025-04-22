@@ -50,13 +50,13 @@ if __name__ == '__main__':
 
     # set number of rois according to the atlas
     atlas2roi = {'cc400': 392, 'ho': 111, 'cc200': 200, 'aal': 116} if 'ABIDE' in args.dataset else {'cc400': 351, 'cc200': 190, 'ho': 111, 'aal': 116}
-    atlas2embed = {'cc400': 392, 'ho': 112, 'cc200': 200, 'aal': 120} if 'ABIDE' in args.dataset else {'cc400': 256, 'cc200': 128, 'ho': 128, 'aal': 128}
     args.num_roi = atlas2roi[args.atlas]
-    # args.embed_dim = atlas2embed[args.atlas]
 
     # check checkpoints path
     if not os.path.exists(args.checkpoints):
         os.makedirs(args.checkpoints)
+    if not os.path.exists(args.results):
+        os.makedirs(args.results)
 
     # init wandb
     if not args.debug:

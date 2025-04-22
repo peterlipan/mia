@@ -57,8 +57,9 @@ def get_model(args):
 
     elif args.model == 'graphseq':
         from .GraphSeq import GraphSeq
-        return GraphSeq(d_in=args.num_roi, d_model=args.embed_dim, n_layers=args.n_layers, d_inner=args.d_inner,
-                        d_x=args.d_x, n_classes=args.n_classes, dropout=args.dropout, num_phenotype=args.num_cp,
+        return GraphSeq(d_in=args.num_roi, d_model=args.embed_dim, n_layers=args.n_layers, 
+                        d_inner=args.d_inner, n_head=args.n_heads, d_x=args.d_x, n_classes=args.n_classes, 
+                        dropout=args.dropout, num_phenotype=args.num_cp,
                         spatial_attention=args.spatial_attention, temporal_attention=args.temporal_attention, 
                         )
     else:

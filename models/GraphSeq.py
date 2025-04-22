@@ -69,7 +69,7 @@ class MultiheadChannelAttention(nn.Module):
         scores = query.transpose(-2, -1).matmul(key) / math.sqrt(dx)
         attention = self.softmax(scores)
         attention = self.dropout(attention)
-        return value.matmul(attention)
+        return value.matmul(attention), attention
 
     def forward(self, x):
         
@@ -84,7 +84,7 @@ class MultiheadChannelAttention(nn.Module):
         v = v.view(sz_b, len_q, n_head, d_x)
 
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2) # b x n x lq x dx
-        q = self.ScaledDotProductChannelAttention(q, k, v) # b x n x lq x dx
+        q, attn = self.ScaledDotProductChannelAttention(q, k, v) # b x n x lq x dx
 
         q = q.transpose(1, 2).contiguous().view(sz_b, len_q, -1) # b x lq x (n*dx)
         q= self.dropout(self.fc(q))
@@ -92,7 +92,7 @@ class MultiheadChannelAttention(nn.Module):
         q += residual
         q = self.norm(q)
         
-        return q
+        return q, attn
 
 
 class MultiheadTokenAttention(nn.Module):
@@ -124,7 +124,7 @@ class MultiheadTokenAttention(nn.Module):
         attention = F.softmax(scores, dim=-1)  # Normalize over the last dimension (seq_len_k)
         attention = self.dropout(attention)  # Apply dropout to attention weights
         
-        return attention.matmul(value)  # (batch, n_head, seq_len_q, d_x)
+        return attention.matmul(value), attention  # (batch, n_head, seq_len_q, d_x)
 
     def forward(self, query, key=None, value=None, attn_mask=None):
         """
@@ -157,7 +157,7 @@ class MultiheadTokenAttention(nn.Module):
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
         # Compute scaled dot-product attention
-        q = self.ScaledDotProductTokenAttention(q, k, v, attn_mask)  # (batch, n_head, seq_len_q, d_x)
+        q, attn = self.ScaledDotProductTokenAttention(q, k, v, attn_mask)  # (batch, n_head, seq_len_q, d_x)
 
         # Concatenate heads and project back to d_model
         q = q.transpose(1, 2).contiguous().view(sz_b, len_q, -1)  # (batch, seq_len_q, n_head * d_x)
@@ -167,7 +167,7 @@ class MultiheadTokenAttention(nn.Module):
         q += query
         q = self.norm(q)
         
-        return q
+        return q, attn
 
 
 class GatedFusion(nn.Module):
@@ -204,7 +204,7 @@ class GridEncoderLayer(nn.Module):
         self.batch_norm = nn.BatchNorm1d(d_model)
         self.fuse = GatedFusion(d_model) if self.cross_attention else None
     
-    def _forward(self, x, mask=None):
+    def _forward(self, x, spat_attn=None, temp_attn=None):
         x_trans = x.transpose(1, 2)  # [B, C, L]
         x = self.batch_norm(x_trans).transpose(1, 2)  # [B, L, C]
 
@@ -213,15 +213,15 @@ class GridEncoderLayer(nn.Module):
 
         # spatial attention
         if self.spatial_attention:
-            xs = self.spat_attn(x)
+            xs, spat_attn_score = self.spat_attn(x)
         
         # temporal attention
         if self.temporal_attention:
-            xt = self.temp_attn(x)
+            xt, temp_attn_score = self.temp_attn(x)
         
         if self.cross_attention:
-            xtc = self.cross_atten1(xt, xs, xs)
-            xsc = self.cross_atten2(xs, xt, xt)
+            xtc, _ = self.cross_atten1(xt, xs, xs)
+            xsc, _ = self.cross_atten2(xs, xt, xt)
             x = x + self.fuse(xtc, xsc)
         
         else:
@@ -231,12 +231,12 @@ class GridEncoderLayer(nn.Module):
         x = self.norm(x)
 
         x = x + self.ffn(x)
-        return x
+        return x, spat_attn_score, temp_attn_score
 
-    def forward(self, x, adj=None):
+    def forward(self, x):
         if self.use_checkpoint and self.training:
-            return checkpoint(self._forward, x, adj, use_reentrant=True)
-        return self._forward(x, adj)
+            return checkpoint(self._forward, x, use_reentrant=True)
+        return self._forward(x)
 
 
 class TokenMerging(nn.Module):
@@ -303,7 +303,8 @@ class GraphSeq(nn.Module):
             d_inner=512, dropout=0.1, num_phenotype=10, spatial_attention=True, temporal_attention=True):
         super(GraphSeq, self).__init__()
 
-        self.d_model = d_in if d_in % n_head == 0 else d_model
+        # self.d_model = d_in if d_in % n_head == 0 else d_model
+        self.d_model = d_model
         self.embedding = LineaEmbedding(d_in, self.d_model, dropout=dropout)
 
         self.positional_encoding = SinusoidalPositionalEncoding(self.d_model, max_len)
@@ -361,7 +362,7 @@ class GraphSeq(nn.Module):
         x = self.positional_encoding(x)
 
         for i, enc_layer in enumerate(self.layers):
-            x = enc_layer(x)
+            x, spat_attn, temp_attn = enc_layer(x)
 
         features = self.norm_out(self.pool(x.transpose(1, 2)).squeeze(-1))
 
@@ -370,4 +371,5 @@ class GraphSeq(nn.Module):
         cp_fea = self.contrast_head(features)
         cp_fea = rearrange(cp_fea, '(b v) c -> b v c', b=B, v=V)
     
-        return ModelOutputs(features=features, logits=logits, cp_features=cp_fea)
+        return ModelOutputs(features=features, logits=logits, cp_features=cp_fea,
+                            spatial_attention=spat_attn, temporal_attention=temp_attn)

@@ -34,7 +34,7 @@ class AdhdROIDataset(Dataset):
         self.n_classes = len(np.unique(self.labels))
 
         if cp:
-            self.cp_columns = cp.replace(' ', '').split(',')
+            self.cp_columns = cp.split(', ')
             self.cp_fea = self.csv[self.cp_columns].fillna(-1).values.astype(int)
             self.cp_fea[self.cp_fea < 0] = -1
             self.num_cp = len(self.cp_columns) + 1
@@ -43,7 +43,7 @@ class AdhdROIDataset(Dataset):
             self.cp_fea = None
             self.num_cp = 1
         if cnp:
-            self.cnp_columns = cnp.replace(' ', '').split(',')
+            self.cnp_columns = cnp.split(', ')
             self.cnp_fea = self.csv[self.cnp_columns].fillna(-1).values.astype(float)
             self.cnp_fea[self.cnp_fea < 0] = -1
             self.num_cnp = len(self.cnp_columns)
@@ -61,8 +61,8 @@ class AdhdROIDataset(Dataset):
         subject = row['Subject_ID']
         filename = row['Filename']
         label = self.labels[idx]
-        cp_label = self.cp_fea[idx]
-        cnp_label = self.cnp_fea[idx]
+        cp_label = self.cp_fea[idx] if self.cp_fea is not None else np.array([-1])
+        cnp_label = self.cnp_fea[idx] if self.cnp_fea is not None else np.array([-1])
         file_path = os.path.join(self.data_path, subject, filename)
         roi = pd.read_csv(file_path, sep='\t').values[:, 2:].astype(float).T # drop the first two columns
         if self.transforms:

@@ -174,7 +174,7 @@ class AbideROIDataset(Dataset):
         csv = csv.fillna(-9999)
 
         self.filenames = csv['FILE_ID'].values
-        self.labels = csv['DX_GROUP'].values
+        self.labels = csv['DX_GROUP'].values # 1 -> ASD, 0 -> NC
         self.suffix = f"_rois_{atlas}.1D"
         self.n_views = n_views
         self.data_root = data_root

@@ -11,21 +11,24 @@ train_csv: "./datasets/splits/ABIDE_Training.csv"
 test_csv: "./datasets/splits/ABIDE_Testing.csv"
 val_csv: "./datasets/splits/ABIDE_Validation.csv"
 checkpoints: "./checkpoints"
-reload: "./checkpoints/ABIDE_BNT_cc400_DX_AUC_0.7891_.pth"
+results: "./results"
+reload: "./checkpoints/ABIDE_BNT_aal_DX_AUC_0.6959.pth"
 
 # Model Options
 model: "graphseq"
 embed_dim: 256
 d_inner: 1024
 n_layers: 5
+n_heads: 8
 d_x: 32
 spatial_attention: True
 temporal_attention: True
+fusion: topl
 
 # Dataset Options
 dataset: "ABIDE_BNT"
 task: "DX"
-atlas: "cc400"
+atlas: "aal"
 cnp: "AGE_AT_SCAN, HANDEDNESS_SCORES"
 cp: "SEX, HANDEDNESS_CATEGORY, EYE_STATUS_AT_SCAN"
 n_views: 12

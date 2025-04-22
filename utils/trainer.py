@@ -235,7 +235,6 @@ class Trainer:
                                                  'cls_loss': cls_loss.item(), 
                                                  'con_loss': con_loss.item(),}})
 
-
     def test_time_phenotype_learning(self, args):
         self.model.train()
         # disable dropout
@@ -261,7 +260,6 @@ class Trainer:
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
         opt.step()
 
-
     def run(self, args):
         if 'ABIDE' in args.dataset:
             self.init_abide_datasets(args)
@@ -279,10 +277,15 @@ class Trainer:
             metrics = self.validate(self.test_loader)
             print(f'Final: {metrics}')
             self.save_results(args, metrics, ttpl=True)
+            self.save_model(args, metrics, ttpl=True)
 
-    def save_model(self, args, performance):
+    def save_model(self, args, performance, ttpl=False):
         state_dict = self.model.module.state_dict() if isinstance(self.model, DDP) else self.model.state_dict()
-        save_path = os.path.join(args.checkpoints, f"{args.dataset}_{args.atlas}_{args.task}_AUC_{performance['AUC']:.4f}_.pth")
+        name = f"{args.dataset}_{args.atlas}_{args.task}_AUC_{performance['AUC']:.4f}"
+        if ttpl:
+            name += "_TTPL"
+        name += ".pth"
+        save_path = os.path.join(args.checkpoints, name)
         torch.save(state_dict, save_path)
     
     def load_model(self, args):
@@ -296,17 +299,29 @@ class Trainer:
         self.model.load_state_dict(state_dict)
 
     def save_results(self, args, metrics, ttpl=False):
-        cols = ['Model', 'Dataset', 'Atlas', 'Task', 'Seed'] + list(metrics.keys())
+        cols = ['Model', 'Dataset', 'Atlas', 'Task', 'Seed', 'Omega'] + list(metrics.keys())
         if not os.path.exists(self.result_csv_name):
             results = pd.DataFrame(columns=cols)
         else:
             results = pd.read_csv(self.result_csv_name)
             assert set(results.columns) == set(cols), "Columns mismatch"
         model_name = args.model if not ttpl else f'{args.model} w/ TTPL'
-        row = [model_name, args.dataset, args.atlas, args.task, args.seed] + [metrics[key] for key in metrics.keys()]
+        row = [model_name, args.dataset, args.atlas, args.task, args.seed, args.ttpl_ratio] + [metrics[key] for key in metrics.keys()]
         results = results._append(pd.Series(row, index=cols), ignore_index=True)
         results.to_csv(self.result_csv_name, index=False)
     
+    def inference(self, args):
+        print(f"Running inference for {args.model} on {args.dataset} dataset")
+        if 'ABIDE' in args.dataset:
+            self.init_abide_datasets(args)
+        else:
+            self.init_adhd_datasets(args)
+        self.init_model(args, reload=True)
+        if args.rank == 0:
+            self.save_features()
+            # metrics = self.validate(self.test_loader)
+            # print(f'Final: {metrics}')
+            # self.save_results(args, metrics=metrics, ttpl=False)
 
     def run_ttpl(self, args):
         if 'ABIDE' in args.dataset:
@@ -319,4 +334,48 @@ class Trainer:
         if args.rank == 0:
             metrics = self.validate(self.test_loader)
             print(f'Final: {metrics}')
-            # self.save_results(args, metrics, ttpl=True)
+            self.save_results(args, metrics, ttpl=True)
+
+    def save_features(self):
+        self.model.eval()
+        samples = {
+            'features': [],
+            'probs': [],
+            'labels': [],
+            'phenotypes': []
+        }
+        filename = f"Features_{self.args.dataset}_{self.args.atlas}_{self.args.model}_{self.args.fusion}Fusion.pt"
+        save_path = os.path.join(self.args.results, filename)
+        
+        with torch.no_grad():
+            for data in self.test_loader:
+                data = {key: value.cuda(non_blocking=True) for key, value in data.items()}
+                outputs = self.model(data['x'])
+                cp = data['cp_label'].cpu()
+                cnp = data['cnp_label'].cpu()
+                phe = torch.cat((cp, cnp), dim=-1)
+                
+                # Collect entire batch tensors
+                samples['features'].append(outputs.features.cpu())
+                samples['probs'].append(F.sigmoid(outputs.logits).cpu())
+                samples['labels'].append(data['label'].cpu())
+                samples['phenotypes'].append(phe)
+            
+            for data in self.val_loader:
+                data = {key: value.cuda(non_blocking=True) for key, value in data.items()}
+                outputs = self.model(data['x'])
+                cp = data['cp_label'].cpu()
+                cnp = data['cnp_label'].cpu()
+                phe = torch.cat((cp, cnp), dim=-1)
+                
+                # Collect entire batch tensors
+                samples['features'].append(outputs.features.cpu())
+                samples['probs'].append(F.sigmoid(outputs.logits).cpu())
+                samples['labels'].append(data['label'].cpu())
+                samples['phenotypes'].append(phe)
+
+            # Concatenate all batches along the first dimension
+            samples = {k: torch.cat(v, dim=0) for k, v in samples.items()}
+        
+        torch.save(samples, save_path)
+        print(f"Features saved at {save_path}")

@@ -1,12 +1,10 @@
 #!/bin/bash
 
 # Define the models and seeds
-seeds=(1 42)
-atlases=("cc400" "cc200" "aal")
+omegas=(0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0 4.5 5.0)
 
 # Iterate over each model and seed
-for seed in "${seeds[@]}"; do
-    for atlas in "${atlases[@]}"; do
-        python3 main.py --debug --seed "$seed" --atlas "$atlas"
-    done
+for omega in "${omegas[@]}"; do
+    python3 main_ttpl.py --debug --ttpl_ratio "$omega"
 done
+
